@@ -543,7 +543,26 @@ input, select { font: inherit; }
 .muscle-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .muscle-grid .chip { padding: 7px 13px; font-size: 13px; }
 
-/* ---------- rest timer bar ---------- */
+/* ---------- rest timer ---------- */
+/* inline preset chips on the Treino tab */
+.timer-presets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 2px 12px;
+}
+.timer-presets-label { font-size: 13px; font-weight: 800; color: var(--muted); margin-right: auto; }
+.timer-preset {
+  padding: 9px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 15px;
+  font-weight: 800;
+}
+.timer-preset:active { background: var(--brand); color: var(--brand-ink); }
+
+/* floating bar: exists only while a countdown runs */
 #timer-bar {
   position: fixed;
   left: 0; right: 0;
@@ -553,27 +572,17 @@ input, select { font: inherit; }
   margin: 0 auto;
   padding: 6px 14px;
 }
-#timer-idle, #timer-run {
+#timer-run {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: var(--card);
-  border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 9px 10px 9px 18px;
-  box-shadow: 0 4px 14px rgba(40, 30, 20, 0.1);
+  padding: 9px 10px 9px 20px;
+  box-shadow: 0 4px 14px rgba(40, 30, 20, 0.18);
+  border: 1px solid var(--accent);
+  background: #fdf0e7;
 }
-.timer-label { font-size: 15px; font-weight: 800; color: var(--muted); margin-right: auto; }
-.timer-preset {
-  padding: 9px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  font-size: 15px;
-  font-weight: 800;
-}
-.timer-preset:active { background: var(--brand); color: var(--brand-ink); }
-#timer-run { border-color: var(--accent); background: #fdf0e7; }
+.timer-label { font-size: 15px; font-weight: 800; color: var(--accent-ink); margin-right: auto; }
 #timer-display {
   margin-left: auto;
   font-size: 26px;

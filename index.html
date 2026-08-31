@@ -11,8 +11,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Treino">
   <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+  <!-- ?v= busts Safari's aggressive icon cache when the artwork changes -->
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png?v=2">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=2">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -68,6 +69,13 @@
         <div class="day-actions">
           <span id="day-progress" class="hint"></span>
           <button id="btn-edit-day" class="btn ghost small" type="button">✎ Editar dia</button>
+        </div>
+
+        <div id="timer-presets" class="timer-presets">
+          <span class="timer-presets-label">⏱ Descanso</span>
+          <button class="timer-preset" data-secs="60" type="button">60s</button>
+          <button class="timer-preset" data-secs="90" type="button">90s</button>
+          <button class="timer-preset" data-secs="120" type="button">120s</button>
         </div>
 
         <div id="workout-list" class="workout-list"></div>
@@ -172,18 +180,13 @@
       </section>
     </main>
 
-    <!-- REST TIMER (Treino tab only) -->
+    <!-- REST TIMER: floating bar exists only while a countdown runs;
+         the presets live inline on the Treino tab -->
     <div id="timer-bar" hidden>
-      <div id="timer-idle">
+      <div id="timer-run">
         <span class="timer-label">⏱ Descanso</span>
-        <button class="timer-preset" data-secs="60" type="button">60s</button>
-        <button class="timer-preset" data-secs="90" type="button">90s</button>
-        <button class="timer-preset" data-secs="120" type="button">120s</button>
-      </div>
-      <div id="timer-run" hidden>
-        <span class="timer-label">⏱</span>
         <span id="timer-display">0:00</span>
-        <button id="timer-cancel" type="button" aria-label="Cancelar descanso">✕</button>
+        <button id="timer-cancel" type="button" aria-label="Fechar timer">✕</button>
       </div>
     </div>
 

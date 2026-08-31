@@ -38,7 +38,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v2";
+const APP_VERSION = "v3";
 
 const $ = (id) => document.getElementById(id);
 
@@ -1246,9 +1246,12 @@ function importBackupFile(file) {
 // ---------- rest timer ----------
 // The absolute end time lives in localStorage, so the countdown survives
 // reloads and tab switches; the interval just recomputes from Date.now().
+// The floating bar only exists while a countdown is active; the preset
+// buttons are inline on the Treino tab.
 
 const TIMER_KEY = "gym:timerEnd";
 let timerInterval = null;
+let timerActive = false;
 let audioCtx = null;
 
 function ensureAudio() {
@@ -1290,13 +1293,13 @@ function cancelTimer() {
   localStorage.removeItem(TIMER_KEY);
   clearInterval(timerInterval);
   timerInterval = null;
-  $("timer-run").hidden = true;
-  $("timer-idle").hidden = false;
+  timerActive = false;
+  updateTimerVisibility();
 }
 
 function runTimer() {
-  $("timer-idle").hidden = true;
-  $("timer-run").hidden = false;
+  timerActive = true;
+  updateTimerVisibility();
   clearInterval(timerInterval);
   const tick = () => {
     const end = Number(localStorage.getItem(TIMER_KEY) || 0);
@@ -1312,8 +1315,8 @@ function runTimer() {
       bar.classList.add("flash");
       setTimeout(() => {
         bar.classList.remove("flash");
-        $("timer-run").hidden = true;
-        $("timer-idle").hidden = false;
+        timerActive = false;
+        updateTimerVisibility();
       }, 1400);
     }
   };
@@ -1321,8 +1324,9 @@ function runTimer() {
   timerInterval = setInterval(tick, 250);
 }
 
+// The bar shows only while a countdown is active, and only on the Treino tab.
 function updateTimerVisibility() {
-  $("timer-bar").hidden = state.tab !== "treino";
+  $("timer-bar").hidden = !timerActive || state.tab !== "treino";
 }
 
 // ---------- snapshot handlers ----------
@@ -1598,7 +1602,7 @@ function boot() {
 
   // resume a rest timer that survived a reload
   if (Number(localStorage.getItem(TIMER_KEY) || 0) > Date.now()) runTimer();
-  updateTimerVisibility();
+  else updateTimerVisibility();
 
   if (!db.isConfigured()) {
     showLogin();
