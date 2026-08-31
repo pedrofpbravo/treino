@@ -27,14 +27,16 @@ Architecture notes for future sessions. This describes the app as it actually is
 - `muscles/mus-<key>`: `{name, order}`
 - `exercises/ex-<slug>` (seeded) or random id: `{name, nameLower, primaryMuscleId, secondaryMuscleIds[], otherMuscleIds[], refWeight, note, createdAt, updatedAt}`
 - `programs/prog-<slug>`: `{name, nameLower, order, createdAt}`
-- `days/day-<prog>-<slug>`: `{programId, name, order, entries: [{exerciseId, targetSets, repMin, repMax}]}` (flat collection, NOT a subcollection; entry order = card order; targets are per day because the same exercise has different targets on different days)
+- `days/day-<prog>-<slug>`: `{programId, name, order, entries: [{exerciseId, targetSets, reps}]}` (flat collection, NOT a subcollection; entry order = card order; targets are per day because the same exercise has different targets on different days). Single rep number per entry ("3×12"). Docs written before v2 carried `repMin`/`repMax`; `entryReps()` in logic.js reads those as `repMax`, no migration.
 - `logs/log-<date>-<dayId>-<exerciseId>`: `{date "YYYY-MM-DD" LOCAL, programId, dayId, exerciseId, exerciseName, dayName, programName, sets: [{reps, weight|null}], ts}`. Deterministic id: check = setDoc, uncheck = deleteDoc, edit = same-doc overwrite. Name snapshots keep history working after deletions.
 - `bathroom/<autoId>`: `{at "YYYY-MM-DDTHH:mm" local, bristol 1-7, note, createdAt, updatedAt}`
 
 ## Key behaviors and decisions
 
 - Dates are always LOCAL strings built from getFullYear/Month/Date. Never `toISOString()` for dates (UTC shifts the date in Brazil after 21:00). A workout crossing midnight logs the remaining exercises on the new date (accepted).
-- Check pre-fills from the last log for that exercise (any day, date < today); with no history it uses the day entry's target (targetSets rows of repMin reps, weight null). Saved immediately on check.
+- Check pre-fills from the last log for that exercise (any day, date < today); with no history it uses the day entry's target (targetSets rows of `reps`, weight = `parseRefWeight(refWeight)`). Saved immediately on check.
+- Workout cards are compact and uniform-height (name + target pill, "Último" line, one-line note; no muscle info). Tapping the card body opens the quick-detail sheet (edits day targets + refWeight + note in two writes); the circle toggles done. "Finalizar treino" (visible when done > 0) shows a summary sheet; concluding only cancels the timer and toasts, since every check already saved.
+- Theme (v2): cream `#f8f3ec` bg, ink `#1e1e1c`, peach accent `#f0916a`, pill buttons. Viewport is locked (`maximum-scale=1` + `touch-action: manipulation`) so double-tap never zooms.
 - "Último" weight everywhere is derived from logs (fallback: exercise `refWeight` string). Never stored on the exercise.
 - Deleting an exercise removes it from all days in one batch and keeps logs (soft-orphan). Deleting a muscle is blocked while referenced. Deleting a program cascades its days, keeps logs.
 - Rest timer stores the absolute end time in `localStorage["gym:timerEnd"]`; survives reloads. AudioContext is unlocked on the preset tap (iOS).

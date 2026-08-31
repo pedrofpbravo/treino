@@ -128,11 +128,10 @@ export function seedPrograms() {
         programId: `prog-${prog.slug}`,
         name: day.name,
         order: di,
-        entries: day.entries.map(([slug, targetSets, repMin, repMax]) => ({
+        entries: day.entries.map(([slug, targetSets, reps]) => ({
           exerciseId: `ex-${slug}`,
           targetSets,
-          repMin,
-          repMax,
+          reps,
         })),
       });
     });

@@ -4,7 +4,7 @@
 // plus ~6 weeks of generated training history and two weeks of bathroom
 // events so prefill, history and all charts render meaningfully.
 
-import { normalize, logDocId, todayStr, addDaysStr, nowLocalStr } from "./logic.js";
+import { normalize, logDocId, todayStr, addDaysStr, nowLocalStr, entryReps, parseRefWeight } from "./logic.js";
 import { DEFAULT_MUSCLES, SEED_EXERCISES, SEED_PROGRAMS } from "./seed.js";
 
 const ts = (ms = Date.now()) => ({ toMillis: () => ms });
@@ -47,11 +47,10 @@ const store = {
       programId: `prog-${prog.slug}`,
       name: day.name,
       order: di,
-      entries: day.entries.map(([slug, targetSets, repMin, repMax]) => ({
+      entries: day.entries.map(([slug, targetSets, reps]) => ({
         exerciseId: `ex-${slug}`,
         targetSets,
-        repMin,
-        repMax,
+        reps,
       })),
     }))
   ),
@@ -64,8 +63,7 @@ const store = {
 // Base working weight: first number in refWeight ("40–42,5 kg" -> 40).
 function baseWeight(exerciseId) {
   const ex = store.exercises.find((e) => e.id === exerciseId);
-  const m = (ex?.refWeight || "").replace(",", ".").match(/\d+(\.\d+)?/);
-  return m ? Number(m[0]) : 20;
+  return parseRefWeight(ex?.refWeight) ?? 20;
 }
 
 // Six weeks of the PPL + Upper Lower program: Mon..Fri = its five days,
@@ -85,7 +83,7 @@ function baseWeight(exerciseId) {
       if (rng() < 0.12) return; // occasionally skipped
       const weight = baseWeight(entry.exerciseId) + Math.floor(weekIdx / 2) * 2.5;
       const sets = Array.from({ length: entry.targetSets }, () => ({
-        reps: entry.repMin + Math.floor(rng() * (entry.repMax - entry.repMin + 1)),
+        reps: Math.max(1, entryReps(entry) - Math.floor(rng() * 3)),
         weight,
       }));
       const ex = store.exercises.find((e) => e.id === entry.exerciseId);

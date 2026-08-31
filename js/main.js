@@ -19,6 +19,8 @@ import {
   logDocId,
   lastLogFor,
   prefillSets,
+  entryReps,
+  parseRefWeight,
   targetLabel,
   setsLabel,
   groupSessions,
@@ -36,7 +38,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v1";
+const APP_VERSION = "v2";
 
 const $ = (id) => document.getElementById(id);
 
@@ -61,6 +63,7 @@ const state = {
   editingExerciseId: null,
   editingDayId: null,
   editingBathId: null,
+  detailExerciseId: null,
   draftEntries: [], // day sheet: [{exerciseId, targetSets, repMin, repMax}]
   draftSecondary: new Set(), // exercise sheet muscle picks
   draftOthers: new Set(),
@@ -203,8 +206,12 @@ function renderWorkout() {
   });
   $("day-progress").textContent =
     entries.length > 0 ? `${done}/${entries.length} feitos hoje` : "";
+  $("btn-finish-workout").hidden = done === 0;
 }
 
+// Compact card, uniform height: name + target, reference line, one-line
+// note. Muscles live in the Exercícios tab and the detail sheet. Tapping
+// the card body opens the quick-detail sheet; the circle toggles done.
 function buildWorkoutCard(entry, day, logId) {
   const ex = state.exercisesById.get(entry.exerciseId);
   const log = state.logsById.get(logId);
@@ -221,7 +228,8 @@ function buildWorkoutCard(entry, day, logId) {
   check.className = "wc-check";
   check.textContent = "✓";
   check.setAttribute("aria-label", log ? "Desmarcar" : "Marcar como feito");
-  check.addEventListener("click", () => {
+  check.addEventListener("click", (e) => {
+    e.stopPropagation();
     if (log) {
       db.deleteLog(logId).catch(() => toast("Erro ao remover."));
       toast("Registro removido.");
@@ -235,7 +243,7 @@ function buildWorkoutCard(entry, day, logId) {
         exerciseName: ex?.name || entry.exerciseId,
         dayName: day.name,
         programName: program?.name || "",
-        sets: prefillSets(last, entry),
+        sets: prefillSets(last, entry, parseRefWeight(ex?.refWeight)),
       }).catch(() => toast("Erro ao salvar."));
     }
   });
@@ -244,6 +252,7 @@ function buildWorkoutCard(entry, day, logId) {
   main.className = "wc-main";
 
   const nameLine = document.createElement("div");
+  nameLine.className = "wc-nameline";
   const name = document.createElement("span");
   name.className = "wc-name";
   name.textContent = ex?.name || "(exercício removido)";
@@ -257,34 +266,120 @@ function buildWorkoutCard(entry, day, logId) {
   }
   main.appendChild(nameLine);
 
-  if (ex) {
-    const mus = document.createElement("span");
-    mus.className = "wc-muscle";
-    mus.textContent = muscleSummary(ex);
-    main.appendChild(mus);
-  }
-
   const ref = lastLine(entry.exerciseId, ex?.refWeight, todayStr());
+  const lastEl = document.createElement("span");
+  lastEl.className = "wc-last";
   if (ref) {
-    const lastEl = document.createElement("span");
-    lastEl.className = "wc-last";
     lastEl.innerHTML = `${ref.label}: <b></b>${ref.date ? ` · ${ref.date}` : ""}`;
     lastEl.querySelector("b").textContent = ref.text;
-    main.appendChild(lastEl);
+  } else {
+    lastEl.innerHTML = "&nbsp;";
   }
+  main.appendChild(lastEl);
 
-  if (ex?.note) {
-    const note = document.createElement("span");
-    note.className = "wc-note";
-    note.textContent = ex.note;
-    main.appendChild(note);
-  }
+  // always rendered (possibly empty) so every card has the same height
+  const note = document.createElement("span");
+  note.className = "wc-note";
+  note.textContent = ex?.note ? ex.note.replace(/\n/g, " · ") : "";
+  if (!ex?.note) note.innerHTML = "&nbsp;";
+  main.appendChild(note);
 
   top.append(check, main);
   card.appendChild(top);
 
+  if (ex) {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".wc-check") || e.target.closest(".sets-editor")) return;
+      openDetailSheet(entry.exerciseId);
+    });
+  }
+
   if (log) card.appendChild(buildSetsEditor(entry, day, log));
   return card;
+}
+
+// ---------- quick-detail sheet (tap on a workout card) ----------
+// Edits the things you touch mid-workout: this day's target (sets x reps),
+// the reference weight and the machine-adjustment note. Name and muscles
+// are edited in the Exercícios tab.
+
+function openDetailSheet(exerciseId) {
+  const ex = state.exercisesById.get(exerciseId);
+  const day = currentDay();
+  const entry = (day?.entries || []).find((e) => e.exerciseId === exerciseId);
+  if (!ex || !entry) return;
+  state.detailExerciseId = exerciseId;
+  $("sheet-detail-title").textContent = ex.name;
+  $("detail-muscles").textContent = muscleSummary(ex);
+  $("det-sets").value = entry.targetSets || 3;
+  $("det-reps").value = entryReps(entry);
+  $("det-refweight").value = ex.refWeight || "";
+  $("det-note").value = ex.note || "";
+  openSheet("sheet-detail");
+}
+
+function submitDetailForm(e) {
+  e.preventDefault();
+  const ex = state.exercisesById.get(state.detailExerciseId);
+  const day = currentDay();
+  if (!ex || !day) return;
+
+  const targetSets = Math.max(1, Math.floor(Number($("det-sets").value)) || 3);
+  const reps = Math.max(1, Math.floor(Number($("det-reps").value)) || 10);
+  const entries = (day.entries || []).map((en) =>
+    en.exerciseId === ex.id ? { exerciseId: ex.id, targetSets, reps } : en
+  );
+  db.updateDay(day.id, { name: day.name, entries }).catch(() => toast("Erro ao salvar."));
+
+  db.updateExercise(ex.id, {
+    name: ex.name,
+    primaryMuscleId: ex.primaryMuscleId,
+    secondaryMuscleIds: ex.secondaryMuscleIds || [],
+    otherMuscleIds: ex.otherMuscleIds || [],
+    refWeight: $("det-refweight").value.trim(),
+    note: $("det-note").value.trim(),
+  }).catch(() => toast("Erro ao salvar."));
+
+  closeSheets();
+}
+
+// ---------- finish workout (summary of today's session) ----------
+
+function openFinishSheet() {
+  const day = currentDay();
+  if (!day) return;
+  const today = todayStr();
+  const doneLogs = (day.entries || [])
+    .map((en) => state.logsById.get(logDocId({ date: today, dayId: day.id, exerciseId: en.exerciseId })))
+    .filter(Boolean);
+  if (doneLogs.length === 0) return;
+
+  $("finish-sub").textContent =
+    `${fmtDateFull(today)} · ${day.name} · ${doneLogs.length} de ${(day.entries || []).length} exercícios`;
+
+  const ul = $("finish-list");
+  ul.innerHTML = "";
+  doneLogs.forEach((log) => {
+    const li = document.createElement("li");
+    li.className = "row-line";
+    const name = document.createElement("span");
+    name.className = "row-name";
+    name.textContent = log.exerciseName;
+    const sub = document.createElement("span");
+    sub.className = "row-sub";
+    sub.textContent = setsLabel(log.sets) || "feito";
+    li.append(name, sub);
+    ul.appendChild(li);
+  });
+
+  openSheet("sheet-finish");
+}
+
+function confirmFinishWorkout() {
+  // Every check already saved its log; concluding just wraps up the session.
+  cancelTimer();
+  closeSheets();
+  toast("Treino registrado. Bom descanso!");
 }
 
 // The sets editor lives inside a checked card. Every change re-saves the
@@ -357,7 +452,7 @@ function buildSetsEditor(entry, day, log) {
   add.textContent = "＋ série";
   add.addEventListener("click", () => {
     const prev = sets[sets.length - 1];
-    sets.push({ reps: prev?.reps ?? entry.repMin ?? 10, weight: prev?.weight ?? null });
+    sets.push({ reps: prev?.reps ?? entryReps(entry), weight: prev?.weight ?? null });
     save();
   });
   wrap.appendChild(add);
@@ -405,15 +500,11 @@ function renderDayEntries() {
       return input;
     };
     const sets = numInput(entry.targetSets, 1, (v) => (entry.targetSets = v));
-    const repMin = numInput(entry.repMin, 1, (v) => (entry.repMin = v));
-    const repMax = numInput(entry.repMax, 1, (v) => (entry.repMax = v));
+    const reps = numInput(entryReps(entry), 1, (v) => (entry.reps = v));
 
     const x1 = document.createElement("span");
     x1.className = "x";
     x1.textContent = "×";
-    const x2 = document.createElement("span");
-    x2.className = "x";
-    x2.textContent = "–";
 
     const up = document.createElement("button");
     up.type = "button";
@@ -447,7 +538,7 @@ function renderDayEntries() {
       renderDayEntries();
     });
 
-    li.append(name, sets, x1, repMin, x2, repMax, up, down, rm);
+    li.append(name, sets, x1, reps, up, down, rm);
     ul.appendChild(li);
   });
 }
@@ -474,7 +565,7 @@ function renderDayExResults() {
     // pointerdown beats the input's blur, so the tap always lands
     row.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      state.draftEntries.push({ exerciseId: ex.id, targetSets: 3, repMin: 8, repMax: 12 });
+      state.draftEntries.push({ exerciseId: ex.id, targetSets: 3, reps: 10 });
       $("day-ex-search").value = "";
       box.hidden = true;
       renderDayEntries();
@@ -489,11 +580,10 @@ function submitDayForm(e) {
   e.preventDefault();
   const name = $("day-name").value.trim();
   if (!name || !state.programId) return;
-  const entries = state.draftEntries.map(({ exerciseId, targetSets, repMin, repMax }) => ({
-    exerciseId,
-    targetSets: Math.max(1, Number(targetSets) || 1),
-    repMin: Math.max(1, Number(repMin) || 1),
-    repMax: Math.max(Number(repMin) || 1, Number(repMax) || Number(repMin) || 1),
+  const entries = state.draftEntries.map((en) => ({
+    exerciseId: en.exerciseId,
+    targetSets: Math.max(1, Number(en.targetSets) || 1),
+    reps: entryReps(en),
   }));
   let op;
   if (state.editingDayId) {
@@ -1388,6 +1478,9 @@ function wire() {
   $("btn-edit-day").addEventListener("click", () => {
     if (state.dayId) openDaySheet(state.dayId);
   });
+  $("btn-finish-workout").addEventListener("click", openFinishSheet);
+  $("btn-finish-confirm").addEventListener("click", confirmFinishWorkout);
+  $("detail-form").addEventListener("submit", submitDetailForm);
   $("program-add-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const name = $("program-add-name").value.trim();

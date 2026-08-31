@@ -88,23 +88,35 @@ const cloneSets = (sets) =>
     weight: s.weight === null || s.weight === undefined || s.weight === "" ? null : Number(s.weight),
   }));
 
+// A day entry's rep target is a single number. New docs store `reps`;
+// docs written before v2 carried a repMin-repMax range and are read as the
+// range's top (no migration needed).
+export function entryReps(entry) {
+  return Number(entry?.reps) || Number(entry?.repMax) || Number(entry?.repMin) || 10;
+}
+
+// First number in a refWeight string: "40–42,5 kg" -> 40, "12 kg cada" -> 12,
+// "carga a calibrar" -> null.
+export function parseRefWeight(refWeight) {
+  const m = String(refWeight || "").replace(",", ".").match(/\d+(\.\d+)?/);
+  return m ? Number(m[0]) : null;
+}
+
 // Sets to pre-fill when an exercise is checked: last session verbatim,
-// else the day entry's target (repMin reps, empty weight).
-export function prefillSets(lastLog, entry) {
+// else the day entry's target reps at the reference weight.
+export function prefillSets(lastLog, entry, refWeightNum = null) {
   if (lastLog && Array.isArray(lastLog.sets) && lastLog.sets.length > 0) {
     return cloneSets(lastLog.sets);
   }
   const n = Math.max(1, Number(entry?.targetSets) || 3);
-  const reps = Number(entry?.repMin) || 10;
-  return Array.from({ length: n }, () => ({ reps, weight: null }));
+  const reps = entryReps(entry);
+  return Array.from({ length: n }, () => ({ reps, weight: refWeightNum }));
 }
 
-// "3×6–10" (or "3×10" when the range collapses).
+// "3×12": always a single rep number.
 export function targetLabel(entry) {
   if (!entry || !entry.targetSets) return "";
-  const { targetSets, repMin, repMax } = entry;
-  const range = repMin === repMax ? `${repMin}` : `${repMin}–${repMax}`;
-  return `${targetSets}×${range}`;
+  return `${entry.targetSets}×${entryReps(entry)}`;
 }
 
 const fmtKg = (w) => `${String(w).replace(".", ",")}kg`;

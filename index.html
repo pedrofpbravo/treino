@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Treino</title>
   <meta name="description" content="Registro de treinos na academia.">
-  <meta name="theme-color" content="#4f46e5">
+  <meta name="theme-color" content="#f8f3ec">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -73,6 +73,7 @@
         <div id="workout-list" class="workout-list"></div>
         <p id="workout-empty" class="empty" hidden>Nenhum exercício neste dia. Toque em ✎ Editar dia para adicionar.</p>
         <p id="workout-noday" class="empty" hidden>Crie um dia para este programa.</p>
+        <button id="btn-finish-workout" class="btn primary finish-btn" type="button" hidden>Finalizar treino</button>
       </section>
 
       <!-- EXERCÍCIOS -->
@@ -256,7 +257,7 @@
         <input id="day-name" required maxlength="40" autocomplete="off" placeholder="ex.: Push">
       </label>
       <div class="field">
-        <span>Exercícios (séries × repetições)</span>
+        <span>Exercícios (séries × reps)</span>
         <ul id="day-entries" class="rows"></ul>
         <div class="picker">
           <input id="day-ex-search" placeholder="Buscar exercício para adicionar…" autocomplete="off">
@@ -270,6 +271,49 @@
         <button type="submit" class="btn primary">Salvar</button>
       </div>
     </form>
+  </div>
+
+  <!-- Exercise quick details (tap on a workout card) -->
+  <div id="sheet-detail" class="sheet" hidden>
+    <h3 id="sheet-detail-title">Exercício</h3>
+    <p id="detail-muscles" class="hint"></p>
+    <form id="detail-form">
+      <div class="field-row">
+        <label class="field">
+          <span>Séries</span>
+          <input id="det-sets" type="number" min="1" step="1" inputmode="numeric" required>
+        </label>
+        <label class="field">
+          <span>Reps</span>
+          <input id="det-reps" type="number" min="1" step="1" inputmode="numeric" required>
+        </label>
+      </div>
+      <label class="field">
+        <span>Peso de referência</span>
+        <input id="det-refweight" maxlength="40" autocomplete="off" placeholder="ex.: 30 kg">
+      </label>
+      <label class="field">
+        <span>Comentário (posição da máquina, ajustes…)</span>
+        <textarea id="det-note" maxlength="500" rows="3"></textarea>
+      </label>
+      <div class="sheet-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn primary">Salvar</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Finish workout summary -->
+  <div id="sheet-finish" class="sheet" hidden>
+    <h3>Resumo do treino</h3>
+    <p id="finish-sub" class="hint"></p>
+    <ul id="finish-list" class="rows"></ul>
+    <div class="sheet-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" data-close>Voltar</button>
+      <button type="button" id="btn-finish-confirm" class="btn primary">Concluir treino</button>
+    </div>
   </div>
 
   <!-- Manage programs -->

@@ -8,7 +8,7 @@ Same architecture as `03. app mercado` (MercadoJá): no build step, plain JS mod
 
 ## How it works day to day
 
-1. **Treino**: pick the program and the day. Tap the circle on a card to mark it done; the sets appear pre-filled from your last session (or from the day's target, e.g. 3×6–10, when there is no history). Adjust reps/kg inline; every change saves. Tap again to unmark.
+1. **Treino**: pick the program and the day. Tap the circle on a card to mark it done; the sets appear pre-filled from your last session (or from the day's target, e.g. 3×10, at the reference weight when there is no history). Adjust reps/kg inline; every change saves. Tap again to unmark. Tap the card body to edit that exercise's target, reference weight and comment. "Finalizar treino" shows the session summary and stops the rest timer.
 2. **Descanso**: tap 60s / 90s / 120s in the bar above the tabs. It vibrates/beeps at zero and survives app reloads.
 3. **Exercícios**: the full catalog with reference weight, machine adjustments and muscle groups. Search is accent-insensitive; chips filter by muscle. This is the reference list; days only contain the exercises you assigned to them.
 4. **Histórico**: sessions by date, workouts per week, and weight progression per exercise.
