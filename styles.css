@@ -354,6 +354,34 @@ input, select { font: inherit; }
 
 .empty { color: var(--muted); text-align: center; padding: 40px 20px; }
 
+/* swipe-to-delete rows (histórico) */
+.item-row.swipe-row { position: relative; overflow: hidden; padding: 0; cursor: default; }
+.swipe-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  padding: 11px 14px;
+  background: var(--card);
+  transition: transform 0.18s ease;
+}
+.swipe-action {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 96px;
+  z-index: 0;
+  background: var(--danger);
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* FAB */
 .fab {
   position: fixed;

@@ -38,7 +38,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v3";
+const APP_VERSION = "v4";
 
 const $ = (id) => document.getElementById(id);
 
@@ -850,6 +850,87 @@ function deleteCurrentExercise() {
   closeSheets();
 }
 
+// ---------- swipe-to-delete rows ----------
+// Wraps a row's content in a sliding layer over a fixed "Remover" button.
+// Swipe left to reveal, tap the button to delete; only one row open at a
+// time; a vertical scroll cancels the gesture.
+
+let closeOpenSwipe = null;
+
+function makeSwipeable(row, onDelete) {
+  row.classList.add("swipe-row");
+  const content = document.createElement("div");
+  content.className = "swipe-content";
+  while (row.firstChild) content.appendChild(row.firstChild);
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "swipe-action";
+  action.textContent = "Remover";
+  action.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onDelete();
+  });
+  row.append(action, content);
+
+  const OPEN_X = -96;
+  const close = () => {
+    content.style.transform = "";
+    row.classList.remove("open");
+    if (closeOpenSwipe === close) closeOpenSwipe = null;
+  };
+
+  let startX = 0;
+  let startY = 0;
+  let dx = 0;
+  let dragging = false;
+
+  row.addEventListener("touchstart", (e) => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    dx = 0;
+    dragging = true;
+    if (closeOpenSwipe && closeOpenSwipe !== close) closeOpenSwipe();
+  }, { passive: true });
+
+  row.addEventListener("touchmove", (e) => {
+    if (!dragging) return;
+    const dy = e.touches[0].clientY - startY;
+    dx = e.touches[0].clientX - startX;
+    if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) {
+      // vertical scroll wins
+      dragging = false;
+      content.style.transform = row.classList.contains("open") ? `translateX(${OPEN_X}px)` : "";
+      return;
+    }
+    const base = row.classList.contains("open") ? OPEN_X : 0;
+    const x = Math.min(0, Math.max(OPEN_X - 24, base + dx));
+    content.style.transform = `translateX(${x}px)`;
+  }, { passive: true });
+
+  row.addEventListener("touchend", () => {
+    if (!dragging) return;
+    dragging = false;
+    const base = row.classList.contains("open") ? OPEN_X : 0;
+    if (base + dx < OPEN_X / 2) {
+      content.style.transform = `translateX(${OPEN_X}px)`;
+      row.classList.add("open");
+      closeOpenSwipe = close;
+    } else {
+      close();
+    }
+  });
+
+  // desktop fallback: right-click reveals the same button
+  row.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (closeOpenSwipe && closeOpenSwipe !== close) closeOpenSwipe();
+    content.style.transform = `translateX(${OPEN_X}px)`;
+    row.classList.add("open");
+    closeOpenSwipe = close;
+  });
+}
+
 // ---------- histórico ----------
 
 function renderHist() {
@@ -905,6 +986,11 @@ function renderSessions() {
       b.textContent = setsLabel(log.sets) || "feito";
       side.appendChild(b);
       li.append(main, side);
+      // swipe left (or right-click on desktop) to remove a wrong entry
+      makeSwipeable(li, () => {
+        db.deleteLog(log.id).catch(() => toast("Erro ao remover."));
+        toast("Registro removido.");
+      });
       ul.appendChild(li);
     });
 
