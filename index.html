@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Treino</title>
+  <meta name="description" content="Registro de treinos na academia.">
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Treino">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+  <div id="offline-banner" hidden>Sem conexão. As alterações serão sincronizadas depois.</div>
+
+  <!-- LOGIN -->
+  <section id="screen-login" class="screen" hidden>
+    <header class="brand">
+      <h1>Trei<span>no</span></h1>
+      <p class="tagline">Seu treino, sempre à mão.</p>
+    </header>
+
+    <div id="setup-warning" class="notice warn" hidden>
+      <strong>Configuração pendente</strong>
+      <p>As chaves do Firebase em <code>js/config.js</code> ainda precisam ser preenchidas. O app não funciona até lá. Veja o README.</p>
+    </div>
+
+    <form id="login-form" autocomplete="on">
+      <label class="field">
+        <span>E-mail</span>
+        <input id="login-email" type="email" autocomplete="username" required placeholder="voce@exemplo.com">
+      </label>
+      <label class="field">
+        <span>Senha</span>
+        <input id="login-password" type="password" autocomplete="current-password" required placeholder="••••••••">
+      </label>
+      <p id="login-error" class="form-error" hidden></p>
+      <button id="btn-login" class="btn primary" type="submit">Entrar</button>
+    </form>
+
+    <div id="install-card" class="notice install" hidden>
+      <strong>Adicione à tela de início</strong>
+      <p>No Safari, toque no botão <span class="share-glyph" aria-hidden="true"></span> Compartilhar e depois em <b>Adicionar à Tela de Início</b>.</p>
+    </div>
+  </section>
+
+  <!-- APP SHELL -->
+  <div id="app-shell" hidden>
+    <main id="tabs">
+
+      <!-- TREINO -->
+      <section id="tab-treino" class="tab">
+        <header class="tab-header">
+          <h2>Treino</h2>
+          <div class="program-row">
+            <select id="program-select" aria-label="Programa"></select>
+            <button id="btn-programs" class="btn ghost small" type="button">Gerenciar</button>
+          </div>
+          <div id="day-chips" class="chips scroll-x"></div>
+        </header>
+
+        <div class="day-actions">
+          <span id="day-progress" class="hint"></span>
+          <button id="btn-edit-day" class="btn ghost small" type="button">✎ Editar dia</button>
+        </div>
+
+        <div id="workout-list" class="workout-list"></div>
+        <p id="workout-empty" class="empty" hidden>Nenhum exercício neste dia. Toque em ✎ Editar dia para adicionar.</p>
+        <p id="workout-noday" class="empty" hidden>Crie um dia para este programa.</p>
+      </section>
+
+      <!-- EXERCÍCIOS -->
+      <section id="tab-exercicios" class="tab" hidden>
+        <header class="tab-header">
+          <h2>Exercícios</h2>
+          <input id="ex-search" class="search" type="search" placeholder="Buscar exercício…" autocomplete="off">
+          <div id="muscle-chips" class="chips scroll-x"></div>
+        </header>
+
+        <div id="exercises-list" class="list"></div>
+        <p id="exercises-empty" class="empty" hidden>Nenhum exercício encontrado.</p>
+
+        <button id="fab-new-exercise" class="fab" aria-label="Novo exercício">＋</button>
+      </section>
+
+      <!-- HISTÓRICO -->
+      <section id="tab-historico" class="tab" hidden>
+        <header class="tab-header">
+          <h2>Histórico</h2>
+          <div id="hist-seg" class="seg-control">
+            <button class="seg-btn active" data-view="sessoes" type="button">Sessões</button>
+            <button class="seg-btn" data-view="progresso" type="button">Progresso</button>
+          </div>
+        </header>
+
+        <div id="hist-sessoes">
+          <div class="card chart-card">
+            <h4 class="chart-title">Treinos por semana</h4>
+            <div id="freq-chart"></div>
+          </div>
+          <div id="sessions-list"></div>
+          <p id="sessions-empty" class="empty" hidden>Nenhum treino registrado ainda. Marque exercícios na aba Treino.</p>
+        </div>
+
+        <div id="hist-progresso" hidden>
+          <label class="field">
+            <span>Exercício</span>
+            <select id="prog-exercise"></select>
+          </label>
+          <div class="card chart-card">
+            <h4 class="chart-title">Carga máxima por treino (kg)</h4>
+            <div id="prog-chart"></div>
+          </div>
+          <div class="card" id="prog-table-card">
+            <ul id="prog-table" class="prog-table"></ul>
+          </div>
+          <p id="prog-empty" class="empty" hidden>Nenhum registro com carga para este exercício.</p>
+        </div>
+      </section>
+
+      <!-- BANHEIRO -->
+      <section id="tab-banheiro" class="tab" hidden>
+        <header class="tab-header">
+          <h2>Banheiro</h2>
+        </header>
+
+        <div class="card" id="bath-stats"></div>
+        <div class="card chart-card">
+          <h4 class="chart-title">Distribuição Bristol</h4>
+          <div id="bath-chart"></div>
+        </div>
+
+        <div id="bath-list" class="list"></div>
+        <p id="bath-empty" class="empty" hidden>Nenhum registro ainda. Toque em ＋ para o primeiro.</p>
+
+        <button id="fab-new-bath" class="fab" aria-label="Novo registro">＋</button>
+      </section>
+
+      <!-- AJUSTES -->
+      <section id="tab-ajustes" class="tab" hidden>
+        <header class="tab-header"><h2>Ajustes</h2></header>
+
+        <h3 class="settings-h">Grupos musculares</h3>
+        <div class="card">
+          <ul id="muscles-list" class="rows"></ul>
+          <form id="muscle-add-form" class="row-add">
+            <input id="muscle-add-name" placeholder="Novo grupo" autocomplete="off" maxlength="40">
+            <button class="btn small" type="submit">Adicionar</button>
+          </form>
+        </div>
+
+        <h3 class="settings-h">Backup</h3>
+        <div class="card">
+          <button id="btn-export" class="btn" type="button">Exportar backup</button>
+          <button id="btn-import" class="btn" type="button">Importar backup</button>
+          <input id="import-file" type="file" accept="application/json,.json" hidden>
+          <p class="hint center">Salva um arquivo com exercícios, programas, histórico e registros. Guarde no Arquivos/iCloud.</p>
+        </div>
+
+        <div class="card">
+          <button id="btn-logout" class="btn ghost danger" type="button">Sair da conta</button>
+        </div>
+
+        <p id="app-version" class="version hint center">Treino</p>
+      </section>
+    </main>
+
+    <!-- REST TIMER (Treino tab only) -->
+    <div id="timer-bar" hidden>
+      <div id="timer-idle">
+        <span class="timer-label">⏱ Descanso</span>
+        <button class="timer-preset" data-secs="60" type="button">60s</button>
+        <button class="timer-preset" data-secs="90" type="button">90s</button>
+        <button class="timer-preset" data-secs="120" type="button">120s</button>
+      </div>
+      <div id="timer-run" hidden>
+        <span class="timer-label">⏱</span>
+        <span id="timer-display">0:00</span>
+        <button id="timer-cancel" type="button" aria-label="Cancelar descanso">✕</button>
+      </div>
+    </div>
+
+    <!-- TAB BAR -->
+    <nav id="tabbar">
+      <button class="tabbtn active" data-tab="treino">
+        <span class="tab-ico">🏋️</span>Treino
+      </button>
+      <button class="tabbtn" data-tab="exercicios">
+        <span class="tab-ico">📋</span>Exercícios
+      </button>
+      <button class="tabbtn" data-tab="historico">
+        <span class="tab-ico">📈</span>Histórico
+      </button>
+      <button class="tabbtn" data-tab="banheiro">
+        <span class="tab-ico">🚽</span>Banheiro
+      </button>
+      <button class="tabbtn" data-tab="ajustes">
+        <span class="tab-ico">⚙</span>Ajustes
+      </button>
+    </nav>
+  </div>
+
+  <!-- SHEETS -->
+  <div id="sheet-backdrop" hidden></div>
+
+  <!-- New / edit exercise -->
+  <div id="sheet-exercise" class="sheet" hidden>
+    <h3 id="sheet-exercise-title">Novo exercício</h3>
+    <form id="exercise-form">
+      <label class="field">
+        <span>Nome *</span>
+        <input id="ex-name" required maxlength="80" autocomplete="off" placeholder="ex.: Supino máquina">
+      </label>
+      <label class="field">
+        <span>Músculo principal *</span>
+        <select id="ex-primary" required></select>
+      </label>
+      <div class="field">
+        <span>Secundários</span>
+        <div id="ex-secondary" class="muscle-grid"></div>
+      </div>
+      <div class="field">
+        <span>Outros</span>
+        <div id="ex-others" class="muscle-grid"></div>
+      </div>
+      <label class="field">
+        <span>Peso de referência</span>
+        <input id="ex-refweight" maxlength="40" autocomplete="off" placeholder="ex.: 30 kg, 12 kg cada">
+      </label>
+      <label class="field">
+        <span>Comentário (posição da máquina, ajustes…)</span>
+        <textarea id="ex-note" maxlength="500" rows="3" placeholder="ex.: banco pós. 5; halteres"></textarea>
+      </label>
+      <p id="ex-error" class="form-error" hidden></p>
+      <div class="sheet-actions">
+        <button type="button" id="btn-exercise-delete" class="btn ghost danger" hidden>Excluir</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn primary">Salvar</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- New / edit day -->
+  <div id="sheet-day" class="sheet" hidden>
+    <h3 id="sheet-day-title">Editar dia</h3>
+    <form id="day-form">
+      <label class="field">
+        <span>Nome *</span>
+        <input id="day-name" required maxlength="40" autocomplete="off" placeholder="ex.: Push">
+      </label>
+      <div class="field">
+        <span>Exercícios (séries × repetições)</span>
+        <ul id="day-entries" class="rows"></ul>
+        <div class="picker">
+          <input id="day-ex-search" placeholder="Buscar exercício para adicionar…" autocomplete="off">
+          <div id="day-ex-results" class="picker-results" hidden></div>
+        </div>
+      </div>
+      <div class="sheet-actions">
+        <button type="button" id="btn-day-delete" class="btn ghost danger" hidden>Excluir</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn primary">Salvar</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Manage programs -->
+  <div id="sheet-programs" class="sheet" hidden>
+    <h3>Programas</h3>
+    <ul id="programs-list" class="rows"></ul>
+    <form id="program-add-form" class="row-add">
+      <input id="program-add-name" placeholder="Novo programa" autocomplete="off" maxlength="60">
+      <button class="btn small" type="submit">Adicionar</button>
+    </form>
+    <div class="sheet-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn ghost" data-close>Fechar</button>
+    </div>
+  </div>
+
+  <!-- New / edit bathroom event -->
+  <div id="sheet-bath" class="sheet" hidden>
+    <h3 id="sheet-bath-title">Novo registro</h3>
+    <form id="bath-form">
+      <label class="field">
+        <span>Data e hora</span>
+        <input id="bath-at" type="datetime-local" required>
+      </label>
+      <div class="field">
+        <span>Escala de Bristol</span>
+        <div id="bristol-grid" class="bristol-grid"></div>
+        <p id="bristol-label" class="hint"></p>
+      </div>
+      <label class="field">
+        <span>Comentário (opcional)</span>
+        <textarea id="bath-note" maxlength="300" rows="2" placeholder="observações…"></textarea>
+      </label>
+      <p id="bath-error" class="form-error" hidden></p>
+      <div class="sheet-actions">
+        <button type="button" id="btn-bath-delete" class="btn ghost danger" hidden>Excluir</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn primary">Salvar</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
