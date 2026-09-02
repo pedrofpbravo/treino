@@ -81,7 +81,6 @@ export const listenExercises = listenCollection("exercises");
 export const listenPrograms = listenCollection("programs");
 export const listenDays = listenCollection("days");
 export const listenLogs = listenCollection("logs");
-export const listenBathroom = listenCollection("bathroom");
 
 // ---------- first-run seeding (fixed doc IDs make it idempotent even if
 // two devices seed at the same time) ----------
@@ -268,31 +267,6 @@ export function deleteLog(logId) {
   return deleteDoc(doc(fs, "logs", logId));
 }
 
-// ---------- bathroom ----------
-
-export function createBathroomEvent({ at, bristol, note }) {
-  return setDoc(doc(collection(fs, "bathroom")), {
-    at,
-    bristol,
-    note: note || "",
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-}
-
-export function updateBathroomEvent(id, { at, bristol, note }) {
-  return updateDoc(doc(fs, "bathroom", id), {
-    at,
-    bristol,
-    note: note || "",
-    updatedAt: serverTimestamp(),
-  });
-}
-
-export function deleteBathroomEvent(id) {
-  return deleteDoc(doc(fs, "bathroom", id));
-}
-
 // ---------- backup ----------
 // Restores a backup produced by "Exportar backup". Writes preserve the
 // original doc ids so every cross-reference stays intact. Existing docs
@@ -354,17 +328,6 @@ export async function importBackup(data) {
       programName: l.programName || "",
       sets: Array.isArray(l.sets) ? l.sets : [],
       ts: serverTimestamp(),
-    }]);
-  });
-
-  (data.bathroom || []).forEach((b) => {
-    if (!b.id || !b.at) return;
-    writes.push([doc(fs, "bathroom", b.id), {
-      at: b.at,
-      bristol: Number(b.bristol) || 4,
-      note: b.note || "",
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
     }]);
   });
 

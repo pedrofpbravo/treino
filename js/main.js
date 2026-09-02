@@ -12,10 +12,8 @@ const db = location.hash === "#debug" ? fakeDb : realDb;
 import {
   normalize,
   todayStr,
-  nowLocalStr,
   fmtDate,
   fmtDateFull,
-  fmtDateTime,
   logDocId,
   lastLogFor,
   prefillSets,
@@ -27,18 +25,14 @@ import {
   progressionSeries,
   exercisesFromLogs,
   weeklyFrequency,
-  BRISTOL_LABELS,
-  bristolClass,
-  bristolStats,
   sortByOrder,
   sortExercises,
-  sortBathroom,
 } from "./logic.js";
 import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v4";
+const APP_VERSION = "v5";
 
 const $ = (id) => document.getElementById(id);
 
@@ -52,7 +46,6 @@ const state = {
   days: [],
   logs: [],
   logsById: new Map(),
-  bathroom: [], // sorted by `at` desc
   tab: "treino",
   programId: localStorage.getItem("gym:program") || null,
   dayId: localStorage.getItem("gym:day") || null,
@@ -62,12 +55,10 @@ const state = {
   progExerciseId: null,
   editingExerciseId: null,
   editingDayId: null,
-  editingBathId: null,
   detailExerciseId: null,
   draftEntries: [], // day sheet: [{exerciseId, targetSets, repMin, repMax}]
   draftSecondary: new Set(), // exercise sheet muscle picks
   draftOthers: new Set(),
-  draftBristol: null,
   seededMuscles: false,
   seededExercises: false,
   seededPrograms: false,
@@ -1045,121 +1036,6 @@ function renderProgress() {
   $("prog-empty").hidden = series.length > 0 || recent.length > 0;
 }
 
-// ---------- banheiro ----------
-
-function renderBath() {
-  const stats = bristolStats(state.bathroom, todayStr());
-  const statsEl = $("bath-stats");
-  statsEl.innerHTML = "";
-  [
-    [String(stats.week), "esta semana"],
-    [stats.perDay.toFixed(1).replace(".", ","), "por dia"],
-    [stats.avg4w.toFixed(1).replace(".", ","), "por sem (4 sem)"],
-  ].forEach(([big, label]) => {
-    const div = document.createElement("div");
-    div.className = "stat";
-    const b = document.createElement("b");
-    b.textContent = big;
-    const span = document.createElement("span");
-    span.textContent = label;
-    div.append(b, span);
-    statsEl.appendChild(div);
-  });
-
-  const colors = { ok: "var(--ok)", warn: "var(--warn)", bad: "var(--bad)" };
-  $("bath-chart").innerHTML = barChart(
-    stats.dist.map((count, i) => ({
-      label: String(i + 1),
-      value: count,
-      color: colors[bristolClass(i + 1)],
-    }))
-  );
-
-  const listEl = $("bath-list");
-  listEl.innerHTML = "";
-  const events = sortBathroom(state.bathroom);
-  if (events.length > 0) {
-    const ul = document.createElement("ul");
-    ul.className = "group-items";
-    events.forEach((ev) => {
-      const li = document.createElement("li");
-      li.className = "item-row";
-
-      const badge = document.createElement("span");
-      badge.className = `badge-pill ${bristolClass(ev.bristol)}`;
-      badge.textContent = ev.bristol;
-
-      const main = document.createElement("div");
-      main.className = "item-main";
-      const name = document.createElement("span");
-      name.className = "item-name";
-      name.textContent = `${fmtDateTime(ev.at)} · ${BRISTOL_LABELS[ev.bristol] || ""}`;
-      main.appendChild(name);
-      if (ev.note) {
-        const sub = document.createElement("span");
-        sub.className = "item-sub";
-        sub.textContent = ev.note;
-        main.appendChild(sub);
-      }
-
-      li.append(badge, main);
-      li.addEventListener("click", () => openBathSheet(ev.id));
-      ul.appendChild(li);
-    });
-    listEl.appendChild(ul);
-  }
-  $("bath-empty").hidden = events.length > 0;
-}
-
-function renderBristolGrid() {
-  const grid = $("bristol-grid");
-  grid.innerHTML = "";
-  for (let n = 1; n <= 7; n++) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `bristol-btn ${bristolClass(n)}` + (state.draftBristol === n ? " on" : "");
-    btn.textContent = n;
-    btn.addEventListener("click", () => {
-      state.draftBristol = n;
-      renderBristolGrid();
-    });
-    grid.appendChild(btn);
-  }
-  $("bristol-label").textContent = state.draftBristol
-    ? `${state.draftBristol} · ${BRISTOL_LABELS[state.draftBristol]}`
-    : "Toque para escolher.";
-}
-
-function openBathSheet(eventId) {
-  state.editingBathId = eventId || null;
-  const ev = eventId ? state.bathroom.find((b) => b.id === eventId) : null;
-  $("sheet-bath-title").textContent = ev ? "Editar registro" : "Novo registro";
-  $("bath-at").value = ev ? ev.at : nowLocalStr();
-  state.draftBristol = ev ? ev.bristol : 4;
-  renderBristolGrid();
-  $("bath-note").value = ev?.note || "";
-  $("bath-error").hidden = true;
-  $("btn-bath-delete").hidden = !ev;
-  openSheet("sheet-bath");
-}
-
-function submitBathForm(e) {
-  e.preventDefault();
-  const at = $("bath-at").value;
-  const errEl = $("bath-error");
-  if (!at || !state.draftBristol) {
-    errEl.textContent = "Preencha a data/hora e escolha o nível na escala.";
-    errEl.hidden = false;
-    return;
-  }
-  const data = { at, bristol: state.draftBristol, note: $("bath-note").value.trim() };
-  const op = state.editingBathId
-    ? db.updateBathroomEvent(state.editingBathId, data)
-    : db.createBathroomEvent(data);
-  op.catch(() => toast("Erro ao salvar registro."));
-  closeSheets();
-}
-
 // ---------- ajustes ----------
 
 function muscleInUse(muscleId) {
@@ -1269,12 +1145,6 @@ function buildBackup() {
       dayName: l.dayName || "",
       programName: l.programName || "",
       sets: l.sets || [],
-    })),
-    bathroom: state.bathroom.map((b) => ({
-      id: b.id,
-      at: b.at,
-      bristol: b.bristol,
-      note: b.note || "",
     })),
   };
 }
@@ -1467,11 +1337,6 @@ function onLogs(logs) {
   renderHist();
 }
 
-function onBathroom(events) {
-  state.bathroom = events;
-  renderBath();
-}
-
 // ---------- tabs ----------
 
 function switchTab(tab) {
@@ -1506,7 +1371,6 @@ function startListeners() {
   db.listenPrograms(onPrograms, err);
   db.listenDays(onDays, err);
   db.listenLogs(onLogs, err);
-  db.listenBathroom(onBathroom, err);
 }
 
 const LOGIN_ERRORS = {
@@ -1621,17 +1485,6 @@ function wire() {
   $("prog-exercise").addEventListener("change", (e) => {
     state.progExerciseId = e.target.value;
     renderProgress();
-  });
-
-  // banheiro
-  $("fab-new-bath").addEventListener("click", () => openBathSheet(null));
-  $("bath-form").addEventListener("submit", submitBathForm);
-  $("btn-bath-delete").addEventListener("click", () => {
-    const ev = state.bathroom.find((b) => b.id === state.editingBathId);
-    if (ev && confirm("Excluir este registro?")) {
-      db.deleteBathroomEvent(ev.id).catch(() => toast("Erro ao excluir."));
-      closeSheets();
-    }
   });
 
   // timer

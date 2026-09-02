@@ -1,10 +1,10 @@
 // In-memory stand-in for db.js, used when the page is opened with #debug
 // (same trick as MercadoJa): lets every tab and flow be exercised locally
 // with sample data, no Firebase needed. Ships the full real seed catalog
-// plus ~6 weeks of generated training history and two weeks of bathroom
-// events so prefill, history and all charts render meaningfully.
+// plus ~6 weeks of generated training history so prefill, history and all
+// charts render meaningfully.
 
-import { normalize, logDocId, todayStr, addDaysStr, nowLocalStr, entryReps, parseRefWeight } from "./logic.js";
+import { normalize, logDocId, todayStr, addDaysStr, entryReps, parseRefWeight } from "./logic.js";
 import { DEFAULT_MUSCLES, SEED_EXERCISES, SEED_PROGRAMS } from "./seed.js";
 
 const ts = (ms = Date.now()) => ({ toMillis: () => ms });
@@ -55,7 +55,6 @@ const store = {
     }))
   ),
   logs: [],
-  bathroom: [],
 };
 
 // ---------- generated history ----------
@@ -106,33 +105,9 @@ function baseWeight(exerciseId) {
   }
 })();
 
-(function generateBathroom() {
-  const now = nowLocalStr();
-  const today = todayStr();
-  for (let back = 14; back >= 1; back--) {
-    const date = addDaysStr(today, -back);
-    const n = rng() < 0.72 ? 1 : rng() < 0.5 ? 2 : 0;
-    for (let i = 0; i < n; i++) {
-      const hour = 7 + Math.floor(rng() * 14);
-      const at = `${date}T${String(hour).padStart(2, "0")}:${String(Math.floor(rng() * 60)).padStart(2, "0")}`;
-      if (at > now) continue;
-      const roll = rng();
-      const bristol = roll < 0.08 ? 2 : roll < 0.35 ? 3 : roll < 0.8 ? 4 : roll < 0.93 ? 5 : 6;
-      store.bathroom.push({
-        id: id("bath"),
-        at,
-        bristol,
-        note: rng() < 0.2 ? "depois do café" : "",
-        createdAt: ts(),
-        updatedAt: ts(),
-      });
-    }
-  }
-})();
-
 // ---------- listener plumbing (same contract as db.js) ----------
 
-const listeners = { muscles: [], exercises: [], programs: [], days: [], logs: [], bathroom: [] };
+const listeners = { muscles: [], exercises: [], programs: [], days: [], logs: [] };
 const emit = {};
 for (const key of Object.keys(listeners)) {
   emit[key] = () => listeners[key].forEach((cb) => cb(store[key].map((x) => ({ ...x }))));
@@ -153,7 +128,6 @@ export const listenExercises = listen("exercises");
 export const listenPrograms = listen("programs");
 export const listenDays = listen("days");
 export const listenLogs = listen("logs");
-export const listenBathroom = listen("bathroom");
 
 export async function seedMuscles() {}
 export async function seedExercises() {}
@@ -261,21 +235,6 @@ export async function deleteLog(lid) {
   emit.logs();
 }
 
-// ---------- bathroom ----------
-
-export async function createBathroomEvent({ at, bristol, note }) {
-  store.bathroom.push({ id: id("bath"), at, bristol, note: note || "", createdAt: ts(), updatedAt: ts() });
-  emit.bathroom();
-}
-export async function updateBathroomEvent(bid, { at, bristol, note }) {
-  Object.assign(store.bathroom.find((b) => b.id === bid), { at, bristol, note: note || "", updatedAt: ts() });
-  emit.bathroom();
-}
-export async function deleteBathroomEvent(bid) {
-  store.bathroom = store.bathroom.filter((b) => b.id !== bid);
-  emit.bathroom();
-}
-
 // ---------- backup ----------
 
 export async function importBackup(data) {
@@ -293,6 +252,5 @@ export async function importBackup(data) {
   );
   (data.days || []).forEach((d) => upsert(store.days, { ...d }));
   (data.logs || []).forEach((l) => upsert(store.logs, { ...l, ts: ts() }));
-  (data.bathroom || []).forEach((b) => upsert(store.bathroom, { ...b, createdAt: ts(), updatedAt: ts() }));
   Object.values(emit).forEach((fn) => fn());
 }

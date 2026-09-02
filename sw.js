@@ -6,7 +6,7 @@
 // DEPLOY RITUAL: bump CACHE below on every deploy.
 
 // Keep in sync with APP_VERSION in js/main.js.
-const CACHE = "treino-v4";
+const CACHE = "treino-v5";
 
 self.addEventListener("install", () => {
   self.skipWaiting();

@@ -2,7 +2,7 @@
 
 Registro de treinos na academia, para uma pessoa.
 
-Select a program (PPL + Upper Lower or Full Body + Upper Lower, both editable), pick the day, and check off each exercise as you finish it. Checking logs the session instantly with the sets pre-filled from the last time you did that exercise; edit reps and weight in place. Machine positions and adjustments live as a comment on each exercise. History keeps every session, a weekly frequency chart and a per-exercise weight progression chart. There is also a bathroom log (Bristol scale 1 to 7) with its own stats, and a rest timer (60/90/120s) pinned above the tab bar.
+Select a program (PPL + Upper Lower or Full Body + Upper Lower, both editable), pick the day, and check off each exercise as you finish it. Checking logs the session instantly with the sets pre-filled from the last time you did that exercise; edit reps and weight in place. Machine positions and adjustments live as a comment on each exercise. History keeps every session, a weekly frequency chart and a per-exercise weight progression chart. A rest timer (60/90/120s) shows above the tab bar while running.
 
 Same architecture as `03. app mercado` (MercadoJá): no build step, plain JS modules, Firebase SDK from the CDN, one config file, installable iPhone PWA, works fully offline.
 
@@ -12,8 +12,7 @@ Same architecture as `03. app mercado` (MercadoJá): no build step, plain JS mod
 2. **Descanso**: tap 60s / 90s / 120s in the bar above the tabs. It vibrates/beeps at zero and survives app reloads.
 3. **Exercícios**: the full catalog with reference weight, machine adjustments and muscle groups. Search is accent-insensitive; chips filter by muscle. This is the reference list; days only contain the exercises you assigned to them.
 4. **Histórico**: sessions by date, workouts per week, and weight progression per exercise.
-5. **Banheiro**: log with date/time (defaults to now, editable), Bristol 1 to 7 and a comment. Stats on top.
-6. **Ajustes**: muscle groups, JSON backup (export/import), logout.
+5. **Ajustes**: muscle groups, JSON backup (export/import), logout.
 
 Programs, days, targets and exercises are all editable in the app (Gerenciar / ✎ Editar dia). The two starting programs and the 27-exercise catalog are seeded automatically on first login.
 
@@ -80,4 +79,5 @@ Open http://localhost:8081/#debug to preview every screen and flow with in-memor
 ## Notes on keys and offline behavior
 
 - The Firebase web config in `js/config.js` is visible in the browser and in a public repo. That is by design for Firebase web apps: access control lives in `firestore.rules`, which denies everything to anyone not logged into your account.
-- Offline: the app shell is cached by the service worker and the data by Firestore's persistent local cache, so checking exercises, editing sets and logging bathroom events all work with no connection and sync on reconnect. A banner at the top shows when you're offline.
+- Offline: the app shell is cached by the service worker and the data by Firestore's persistent local cache, so checking exercises and editing sets work with no connection and sync on reconnect. A banner at the top shows when you're offline.
+- The bathroom log (Bristol scale) that used to live in this app moved to its own app, Intest (`05. app intest`), in Sep 2026.

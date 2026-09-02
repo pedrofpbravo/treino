@@ -133,24 +133,6 @@
         </div>
       </section>
 
-      <!-- BANHEIRO -->
-      <section id="tab-banheiro" class="tab" hidden>
-        <header class="tab-header">
-          <h2>Banheiro</h2>
-        </header>
-
-        <div class="card" id="bath-stats"></div>
-        <div class="card chart-card">
-          <h4 class="chart-title">Distribuição Bristol</h4>
-          <div id="bath-chart"></div>
-        </div>
-
-        <div id="bath-list" class="list"></div>
-        <p id="bath-empty" class="empty" hidden>Nenhum registro ainda. Toque em ＋ para o primeiro.</p>
-
-        <button id="fab-new-bath" class="fab" aria-label="Novo registro">＋</button>
-      </section>
-
       <!-- AJUSTES -->
       <section id="tab-ajustes" class="tab" hidden>
         <header class="tab-header"><h2>Ajustes</h2></header>
@@ -200,9 +182,6 @@
       </button>
       <button class="tabbtn" data-tab="historico">
         <span class="tab-ico">📈</span>Histórico
-      </button>
-      <button class="tabbtn" data-tab="banheiro">
-        <span class="tab-ico">🚽</span>Banheiro
       </button>
       <button class="tabbtn" data-tab="ajustes">
         <span class="tab-ico">⚙</span>Ajustes
@@ -331,33 +310,6 @@
       <span class="spacer"></span>
       <button type="button" class="btn ghost" data-close>Fechar</button>
     </div>
-  </div>
-
-  <!-- New / edit bathroom event -->
-  <div id="sheet-bath" class="sheet" hidden>
-    <h3 id="sheet-bath-title">Novo registro</h3>
-    <form id="bath-form">
-      <label class="field">
-        <span>Data e hora</span>
-        <input id="bath-at" type="datetime-local" required>
-      </label>
-      <div class="field">
-        <span>Escala de Bristol</span>
-        <div id="bristol-grid" class="bristol-grid"></div>
-        <p id="bristol-label" class="hint"></p>
-      </div>
-      <label class="field">
-        <span>Comentário (opcional)</span>
-        <textarea id="bath-note" maxlength="300" rows="2" placeholder="observações…"></textarea>
-      </label>
-      <p id="bath-error" class="form-error" hidden></p>
-      <div class="sheet-actions">
-        <button type="button" id="btn-bath-delete" class="btn ghost danger" hidden>Excluir</button>
-        <span class="spacer"></span>
-        <button type="button" class="btn ghost" data-close>Cancelar</button>
-        <button type="submit" class="btn primary">Salvar</button>
-      </div>
-    </form>
   </div>
 
   <div id="toast" hidden></div>
