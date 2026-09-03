@@ -28,6 +28,7 @@ You (Claude/Fable) are the **orchestrator and tech lead** for this project. You 
 - Keep a running `WORKLOG.md` in the repo: plan, delegations sent, results received, review findings, fixes.
 - If Codex is unreachable (not installed / not logged in), stop and tell me — do not silently do the work yourself.
 - Code: runs cleanly from a fresh shell; minimal dependencies; brief README or header comment.
+- **Token economy — batch everything.** Ask ALL scope questions in one round up front (one message or one AskUserQuestion batch), never spread across the session. Verify each phase in ONE consolidated pass: a single browser script that runs every acceptance check together and returns one result, instead of many small probes. One status report per phase, not per step. Prefer one big call that returns everything over five small ones.
 
 ## What it is
 
