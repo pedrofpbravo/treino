@@ -24,13 +24,14 @@ export const DEFAULT_MUSCLES = [
 ];
 
 export const DEFAULT_CARDIO_TYPES = [
-  { key: "bike", name: "Bike" },
-  { key: "eliptico", name: "Elíptico" },
-  { key: "esteira", name: "Esteira" },
-  { key: "escada", name: "Escada" },
-  { key: "corrida", name: "Corrida" },
-  { key: "remo", name: "Remo" },
-  { key: "outro", name: "Outro" },
+  { key: "bike", name: "Bike s/ suporte", note: "banco ruim · pos. 13, banco pos. 4" },
+  { key: "bike-suporte", name: "Bike c/ suporte", note: "pos. 25" },
+  { key: "eliptico", name: "Elíptico", note: "" },
+  { key: "esteira", name: "Esteira", note: "" },
+  { key: "escada", name: "Escada", note: "" },
+  { key: "corrida", name: "Corrida", note: "" },
+  { key: "remo", name: "Remo", note: "" },
+  { key: "outro", name: "Outro", note: "" },
 ];
 
 // primary/secondary/others use the muscle keys above.

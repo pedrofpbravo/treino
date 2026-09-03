@@ -36,7 +36,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v6";
+const APP_VERSION = "v6.1";
 
 const $ = (id) => document.getElementById(id);
 
@@ -251,9 +251,17 @@ function openCardioSheet() {
     option.textContent = type.name;
     select.appendChild(option);
   });
+  updateCardioTypeNote();
   $("cardio-minutes").value = "";
   $("cardio-note").value = "";
   openSheet("sheet-cardio");
+}
+
+function updateCardioTypeNote() {
+  const type = state.cardioTypes.find((item) => item.id === $("cardio-type").value);
+  const note = $("cardio-type-note");
+  note.textContent = type?.note || "";
+  note.hidden = !type?.note;
 }
 
 function submitCardio(e) {
@@ -1411,14 +1419,28 @@ function renderCardioTypesManager() {
     nameInput.type = "text";
     nameInput.value = type.name;
     nameInput.maxLength = 40;
-    nameInput.addEventListener("change", () => {
+    const noteInput = document.createElement("input");
+    noteInput.type = "text";
+    noteInput.className = "cardio-type-note-input";
+    noteInput.value = type.note || "";
+    noteInput.maxLength = 200;
+    noteInput.placeholder = "nota (posição, ajustes…)";
+
+    const save = () => {
       const name = nameInput.value.trim();
       if (!name) {
         nameInput.value = type.name;
         return;
       }
-      db.renameCardioType(type.id, name).catch(() => toast("Erro ao renomear."));
-    });
+      db.updateCardioType(type.id, { name, note: noteInput.value.trim() })
+        .catch(() => toast("Erro ao atualizar tipo."));
+    };
+    nameInput.addEventListener("change", save);
+    noteInput.addEventListener("change", save);
+
+    const fields = document.createElement("div");
+    fields.className = "cardio-type-fields";
+    fields.append(nameInput, noteInput);
 
     const up = document.createElement("button");
     up.type = "button";
@@ -1455,7 +1477,7 @@ function renderCardioTypesManager() {
       }
     });
 
-    li.append(nameInput, up, down, del);
+    li.append(fields, up, down, del);
     ul.appendChild(li);
   });
 }
@@ -1469,7 +1491,12 @@ function buildBackup() {
     version: APP_VERSION,
     exportedAt: new Date().toISOString(),
     muscles: state.muscles.map(({ id, name, order }) => ({ id, name, order })),
-    cardioTypes: state.cardioTypes.map(({ id, name, order }) => ({ id, name, order })),
+    cardioTypes: state.cardioTypes.map(({ id, name, note, order }) => ({
+      id,
+      name,
+      note: note || "",
+      order,
+    })),
     exercises: state.exercises.map((e) => ({
       id: e.id,
       name: e.name,
@@ -1663,8 +1690,10 @@ function updateTimerVisibility() {
 
 const REFWEIGHT_MIGRATION_KEY = "gym:migrate-refweight-v6";
 const SMITH_SEED_KEY = "gym:seed-smith-v6";
+const CARDIO_BIKES_KEY = "gym:cardio-bikes-v6-1";
 let refWeightMigrationStarted = false;
 let smithSeedStarted = false;
+let cardioBikesStarted = false;
 
 async function migrateRefWeights(exercises) {
   if (refWeightMigrationStarted || localStorage.getItem(REFWEIGHT_MIGRATION_KEY)) return;
@@ -1723,6 +1752,54 @@ async function seedSmithExercise(exercises) {
     localStorage.setItem(SMITH_SEED_KEY, "1");
   } catch {
     toast("Erro ao adicionar Agachamento smith.");
+  }
+}
+
+async function upsertCardioBikes(types) {
+  if (cardioBikesStarted || localStorage.getItem(CARDIO_BIKES_KEY)) return;
+  cardioBikesStarted = true;
+  const orders = {
+    "ct-eliptico": 2,
+    "ct-esteira": 3,
+    "ct-escada": 4,
+    "ct-corrida": 5,
+    "ct-remo": 6,
+    "ct-outro": 7,
+  };
+  const typeWrites = [
+    {
+      id: "ct-bike",
+      name: "Bike s/ suporte",
+      note: "banco ruim · pos. 13, banco pos. 4",
+      order: 0,
+    },
+    { id: "ct-bike-suporte", name: "Bike c/ suporte", note: "pos. 25", order: 1 },
+    ...types
+      .filter((type) => Object.hasOwn(orders, type.id))
+      .map((type) => ({ id: type.id, order: orders[type.id] })),
+  ];
+
+  try {
+    await db.upsertCardioTypes(typeWrites);
+    await Promise.all([
+      db.createCardioWithId("backfill-2026-09-02-bike", {
+        date: "2026-09-02",
+        typeId: "ct-bike",
+        typeName: "Bike s/ suporte",
+        minutes: 20,
+        note: "dificuldade 8",
+      }),
+      db.createCardioWithId("backfill-2026-09-03-eliptico", {
+        date: "2026-09-03",
+        typeId: "ct-eliptico",
+        typeName: "Elíptico",
+        minutes: 30,
+        note: "dificuldade 8",
+      }),
+    ]);
+    localStorage.setItem(CARDIO_BIKES_KEY, "1");
+  } catch {
+    toast("Erro ao atualizar tipos e registros de cardio.");
   }
 }
 
@@ -1785,6 +1862,7 @@ function onCardioTypes(types) {
     return;
   }
   state.cardioTypes = sortByOrder(types);
+  upsertCardioBikes(types);
   renderCardioTypesManager();
 }
 
@@ -1895,6 +1973,7 @@ function wire() {
   $("btn-finish-workout").addEventListener("click", openFinishSheet);
   $("btn-finish-confirm").addEventListener("click", confirmFinishWorkout);
   $("btn-add-cardio").addEventListener("click", openCardioSheet);
+  $("cardio-type").addEventListener("change", updateCardioTypeNote);
   $("cardio-form").addEventListener("submit", submitCardio);
   $("detail-form").addEventListener("submit", submitDetailForm);
   $("program-add-form").addEventListener("submit", (e) => {

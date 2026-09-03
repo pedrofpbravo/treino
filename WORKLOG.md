@@ -162,6 +162,23 @@ Deploy once at the end: bump CACHE (sw.js) + APP_VERSION (main.js).
   needed. Lesson recorded in CLAUDE.md (local dev section).
 - Phase 4 CLOSED.
 
+### Phase 5 (follow-up request, 2026-09-03)
+- Scope (Pedro, confirmed via popups): split Bike into "Bike s/ suporte"
+  (note "banco ruim · pos. 13, banco pos. 4", keeps ct-bike id + history) and
+  "Bike c/ suporte" (note "pos. 25"); cardioTypes gain a `note` shown as a
+  muted hint in the "+ Cardio" sheet and editable in the Ajustes manager;
+  backfill 02/09 Bike s/ suporte 20min and 03/09 Elíptico 30min, both note
+  "dificuldade 8".
+- Codex exec delivered; Fable review confirmed the critical bits: batch
+  upsert uses set(...,{merge:true}) so order-only renumbers keep names/notes;
+  upsert runs after the empty-collection seed guard; backup export/import
+  carry the note. No fixes needed.
+- Verified in #debug: 8 types in order (both bikes on top, correct notes),
+  backfill docs exact (dates/minutes/notes/typeName snapshots), sheet hint
+  shows for bike / hides for esteira, manager rows have name + note inputs,
+  flag set after success.
+- Versions bumped to v6.1 (APP_VERSION + CACHE), CLAUDE.md updated, deployed.
+
 ### Batch close-out (2026-09-03)
 - Versions bumped: APP_VERSION v6 (js/main.js), CACHE treino-v6 (sw.js).
 - CLAUDE.md updated to describe v6 (tabs, data model, behaviors, dev port).

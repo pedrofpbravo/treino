@@ -22,7 +22,12 @@ function rng() {
 
 const store = {
   muscles: DEFAULT_MUSCLES.map(({ key, name }, i) => ({ id: `mus-${key}`, name, order: i })),
-  cardioTypes: DEFAULT_CARDIO_TYPES.map(({ key, name }, i) => ({ id: `ct-${key}`, name, order: i })),
+  cardioTypes: DEFAULT_CARDIO_TYPES.map(({ key, name, note }, i) => ({
+    id: `ct-${key}`,
+    name,
+    note: note || "",
+    order: i,
+  })),
   exercises: SEED_EXERCISES.map((ex) => ({
     id: `ex-${ex.slug}`,
     name: ex.name,
@@ -191,11 +196,19 @@ export async function deleteMuscle(mid) {
 // ---------- cardio types ----------
 
 export async function addCardioType(name, order) {
-  store.cardioTypes.push({ id: id("ct"), name, order });
+  store.cardioTypes.push({ id: id("ct"), name, note: "", order });
   emit.cardioTypes();
 }
-export async function renameCardioType(tid, name) {
-  store.cardioTypes.find((type) => type.id === tid).name = name;
+export async function updateCardioType(tid, { name, note }) {
+  Object.assign(store.cardioTypes.find((type) => type.id === tid), { name, note: note || "" });
+  emit.cardioTypes();
+}
+export async function upsertCardioTypes(types) {
+  types.forEach(({ id: tid, ...data }) => {
+    const type = store.cardioTypes.find((item) => item.id === tid);
+    if (type) Object.assign(type, data);
+    else store.cardioTypes.push({ id: tid, ...data });
+  });
   emit.cardioTypes();
 }
 export async function swapCardioTypeOrder(a, b) {
@@ -300,6 +313,13 @@ export async function deleteLog(lid) {
 
 export async function createCardio(data) {
   store.cardio.push({ id: id("cardio"), ...data, minutes: Math.floor(Number(data.minutes)), note: data.note || "", ts: ts() });
+  emit.cardio();
+}
+export async function createCardioWithId(cid, data) {
+  const entry = { id: cid, ...data, minutes: Math.floor(Number(data.minutes)), note: data.note || "", ts: ts() };
+  const idx = store.cardio.findIndex((item) => item.id === cid);
+  if (idx >= 0) store.cardio[idx] = entry;
+  else store.cardio.push(entry);
   emit.cardio();
 }
 export async function deleteCardio(cid) {

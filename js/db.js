@@ -97,8 +97,8 @@ export function seedMuscles() {
 
 export function seedCardioTypes() {
   const batch = writeBatch(fs);
-  DEFAULT_CARDIO_TYPES.forEach(({ key, name }, i) => {
-    batch.set(doc(fs, "cardioTypes", `ct-${key}`), { name, order: i });
+  DEFAULT_CARDIO_TYPES.forEach(({ key, name, note }, i) => {
+    batch.set(doc(fs, "cardioTypes", `ct-${key}`), { name, note: note || "", order: i });
   });
   return batch.commit();
 }
@@ -173,11 +173,19 @@ export function deleteMuscle(id) {
 // ---------- cardio types ----------
 
 export function addCardioType(name, order) {
-  return setDoc(doc(collection(fs, "cardioTypes")), { name, order });
+  return setDoc(doc(collection(fs, "cardioTypes")), { name, note: "", order });
 }
 
-export function renameCardioType(id, name) {
-  return updateDoc(doc(fs, "cardioTypes", id), { name });
+export function updateCardioType(id, { name, note }) {
+  return updateDoc(doc(fs, "cardioTypes", id), { name, note: note || "" });
+}
+
+export function upsertCardioTypes(types) {
+  const batch = writeBatch(fs);
+  types.forEach(({ id, ...data }) => {
+    batch.set(doc(fs, "cardioTypes", id), data, { merge: true });
+  });
+  return batch.commit();
 }
 
 export function swapCardioTypeOrder(a, b) {
@@ -318,6 +326,17 @@ export function createCardio(data) {
   });
 }
 
+export function createCardioWithId(id, data) {
+  return setDoc(doc(fs, "cardio", id), {
+    date: data.date,
+    typeId: data.typeId,
+    typeName: data.typeName,
+    minutes: Math.floor(Number(data.minutes)),
+    note: data.note || "",
+    ts: serverTimestamp(),
+  });
+}
+
 export function deleteCardio(id) {
   return deleteDoc(doc(fs, "cardio", id));
 }
@@ -338,7 +357,11 @@ export async function importBackup(data) {
 
   (data.cardioTypes || []).forEach((type) => {
     if (!type.id || !type.name) return;
-    writes.push([doc(fs, "cardioTypes", type.id), { name: type.name, order: type.order ?? 0 }]);
+    writes.push([doc(fs, "cardioTypes", type.id), {
+      name: type.name,
+      note: type.note || "",
+      order: type.order ?? 0,
+    }]);
   });
 
   (data.exercises || []).forEach((e) => {

@@ -90,6 +90,13 @@ input, select { font: inherit; }
 .field .input-unit { display: flex; align-items: center; gap: 9px; margin: 0; }
 .field .input-unit input { flex: 1; min-width: 0; width: auto; }
 .input-unit-label { flex: none; color: var(--muted); font-size: 14px; font-weight: 700; }
+.cardio-type-note {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 4px;
+  line-height: 1.35;
+}
 
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
@@ -528,6 +535,14 @@ input, select { font: inherit; }
 .row-line input[type="text"]:focus { outline: none; border-color: var(--ink); background: var(--bg); }
 .row-line .row-name { flex: 1; min-width: 0; font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-line .row-sub { font-size: 12px; color: var(--muted); }
+.cardio-type-fields { flex: 1; min-width: 0; }
+.row-line .cardio-type-fields input { display: block; width: 100%; }
+.row-line .cardio-type-fields .cardio-type-note-input {
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
 .icon-btn {
   width: 36px; height: 36px;
   flex: none;
