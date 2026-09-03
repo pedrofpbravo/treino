@@ -23,6 +23,16 @@ export const DEFAULT_MUSCLES = [
   { key: "adutores", name: "Adutores/Abdutores" },
 ];
 
+export const DEFAULT_CARDIO_TYPES = [
+  { key: "bike", name: "Bike" },
+  { key: "eliptico", name: "Elíptico" },
+  { key: "esteira", name: "Esteira" },
+  { key: "escada", name: "Escada" },
+  { key: "corrida", name: "Corrida" },
+  { key: "remo", name: "Remo" },
+  { key: "outro", name: "Outro" },
+];
+
 // primary/secondary/others use the muscle keys above.
 export const SEED_EXERCISES = [
   {
@@ -129,6 +139,13 @@ export const SEED_EXERCISES = [
     refWeight: "25–27,5 kg",
     note: "",
     primary: "quadriceps", secondary: ["gluteos"], others: [],
+  },
+  {
+    slug: "agachamento-smith",
+    name: "Agachamento smith",
+    refWeight: "",
+    note: "",
+    primary: "quadriceps", secondary: ["gluteos", "posterior"], others: [],
   },
   {
     slug: "agachamento_bulgaro",

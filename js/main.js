@@ -17,14 +17,18 @@ import {
   logDocId,
   lastLogFor,
   prefillSets,
+  logDone,
+  cycleDays,
   entryReps,
   parseRefWeight,
   targetLabel,
   setsLabel,
+  setsParts,
   groupSessions,
   progressionSeries,
   exercisesFromLogs,
   weeklyFrequency,
+  weeklyCardio,
   sortByOrder,
   sortExercises,
 } from "./logic.js";
@@ -32,7 +36,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v5";
+const APP_VERSION = "v6";
 
 const $ = (id) => document.getElementById(id);
 
@@ -46,6 +50,8 @@ const state = {
   days: [],
   logs: [],
   logsById: new Map(),
+  cardioTypes: [], // sorted by order
+  cardio: [],
   tab: "treino",
   programId: localStorage.getItem("gym:program") || null,
   dayId: localStorage.getItem("gym:day") || null,
@@ -62,6 +68,7 @@ const state = {
   seededMuscles: false,
   seededExercises: false,
   seededPrograms: false,
+  seededCardioTypes: false,
   listenersStarted: false,
 };
 
@@ -109,9 +116,34 @@ const daysOf = (programId) =>
 // beforeDate so it always compares against the PREVIOUS session.
 function lastLine(exerciseId, refWeight, beforeDate = "9999-99-99") {
   const last = lastLogFor(state.logs, exerciseId, beforeDate);
-  if (last) return { label: "Último", text: setsLabel(last.sets), date: fmtDate(last.date) };
-  if (refWeight) return { label: "Ref", text: refWeight, date: "" };
+  if (last) return { label: "Último", text: setsLabel(last.sets), sets: last.sets, date: fmtDate(last.date) };
+  if (refWeight) {
+    const value = String(refWeight).trim();
+    const text = /^\d+(?:[.,]\d+)?$/.test(value) ? `${value.replace(".", ",")}kg` : value;
+    return { label: "Ref", text, date: "" };
+  }
   return null;
+}
+
+function appendStyledSets(container, sets) {
+  setsParts(sets).forEach((set, idx) => {
+    if (idx > 0) container.appendChild(document.createTextNode(" · "));
+    if (set.weight) {
+      const weight = document.createElement("span");
+      weight.className = "wc-last-weight";
+      weight.textContent = set.weight;
+      container.appendChild(weight);
+    }
+    const reps = document.createElement("span");
+    reps.className = "wc-last-reps";
+    reps.textContent = set.weight ? `×${set.reps}` : set.reps;
+    container.appendChild(reps);
+  });
+}
+
+function numericRefWeight(id) {
+  const value = $(id).value.trim().replace(",", ".");
+  return value === "" ? "" : String(Number(value));
 }
 
 // ---------- treino ----------
@@ -145,11 +177,12 @@ function renderTreino() {
   const chipsEl = $("day-chips");
   chipsEl.innerHTML = "";
   const days = state.programId ? daysOf(state.programId) : [];
+  const trainedDays = cycleDays(state.logs, state.programId, days.map((day) => day.id));
   days.forEach((day) => {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "chip" + (day.id === state.dayId ? " on" : "");
-    chip.textContent = day.name;
+    chip.textContent = trainedDays.has(day.id) ? `✓ ${day.name}` : day.name;
     chip.addEventListener("click", () => {
       state.dayId = day.id;
       localStorage.setItem("gym:day", day.id);
@@ -167,6 +200,79 @@ function renderTreino() {
 
   $("btn-edit-day").hidden = !state.dayId;
   renderWorkout();
+  renderTodayCardio();
+}
+
+function renderTodayCardio() {
+  const ul = $("today-cardio-list");
+  ul.innerHTML = "";
+  state.cardio
+    .filter((entry) => entry.date === todayStr())
+    .sort((a, b) => {
+      const at = a.ts && typeof a.ts.toMillis === "function" ? a.ts.toMillis() : 0;
+      const bt = b.ts && typeof b.ts.toMillis === "function" ? b.ts.toMillis() : 0;
+      return bt - at;
+    })
+    .forEach((entry) => {
+      const li = document.createElement("li");
+      li.className = "today-cardio-row";
+      const main = document.createElement("div");
+      main.className = "today-cardio-main";
+      const title = document.createElement("span");
+      title.className = "today-cardio-title";
+      title.textContent = `${entry.typeName || "Cardio"} · ${entry.minutes} min`;
+      main.appendChild(title);
+      if (entry.note) {
+        const note = document.createElement("span");
+        note.className = "today-cardio-note";
+        note.textContent = entry.note.replace(/\n/g, " · ");
+        main.appendChild(note);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "today-cardio-remove";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Remover ${entry.typeName || "cardio"}`);
+      remove.addEventListener("click", () => {
+        db.deleteCardio(entry.id).catch(() => toast("Erro ao remover cardio."));
+        toast("Cardio removido.");
+      });
+      li.append(main, remove);
+      ul.appendChild(li);
+    });
+}
+
+function openCardioSheet() {
+  const select = $("cardio-type");
+  select.innerHTML = "";
+  state.cardioTypes.forEach((type) => {
+    const option = document.createElement("option");
+    option.value = type.id;
+    option.textContent = type.name;
+    select.appendChild(option);
+  });
+  $("cardio-minutes").value = "";
+  $("cardio-note").value = "";
+  openSheet("sheet-cardio");
+}
+
+function submitCardio(e) {
+  e.preventDefault();
+  const type = state.cardioTypes.find((item) => item.id === $("cardio-type").value);
+  const minutes = Math.floor(Number($("cardio-minutes").value));
+  if (!type || !(minutes > 0)) return;
+  db.createCardio({
+    date: todayStr(),
+    typeId: type.id,
+    typeName: type.name,
+    minutes,
+    note: $("cardio-note").value.trim(),
+  })
+    .then(() => {
+      closeSheets();
+      toast("Cardio registrado.");
+    })
+    .catch(() => toast("Erro ao registrar cardio."));
 }
 
 function renderWorkout() {
@@ -192,24 +298,136 @@ function renderWorkout() {
   let done = 0;
   entries.forEach((entry) => {
     const logId = logDocId({ date: today, dayId: day.id, exerciseId: entry.exerciseId });
-    if (state.logsById.has(logId)) done++;
+    if (logDone(state.logsById.get(logId))) done++;
     listEl.appendChild(buildWorkoutCard(entry, day, logId));
   });
   $("day-progress").textContent =
     entries.length > 0 ? `${done}/${entries.length} feitos hoje` : "";
   $("btn-finish-workout").hidden = done === 0;
+  makeDraggableList(listEl);
+}
+
+// Long-press reorder for workout cards. A placeholder stays in the flex list
+// while the lifted card follows the pointer, so mouse and touch share the same
+// compact implementation. renderWorkout() calls this on every render, so the
+// listeners are wired to the persistent #workout-list only once; the day is
+// re-resolved at drop time (a captured one would go stale across renders).
+function makeDraggableList(list) {
+  if (list.dataset.dragWired) return;
+  list.dataset.dragWired = "1";
+  const HOLD_MS = 350;
+  const MOVE_TOLERANCE = 8;
+  let pending = null;
+  let drag = null;
+
+  const clearPending = () => {
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending = null;
+  };
+
+  const lift = () => {
+    if (!pending || !pending.card.isConnected) return;
+    const { card, pointerId, x, y } = pending;
+    const rect = card.getBoundingClientRect();
+    const placeholder = document.createElement("div");
+    placeholder.className = "workout-placeholder";
+    placeholder.style.height = `${rect.height}px`;
+    card.before(placeholder);
+    card.classList.add("dragging");
+    Object.assign(card.style, {
+      position: "fixed",
+      top: `${rect.top}px`,
+      left: `${rect.left}px`,
+      width: `${rect.width}px`,
+      margin: "0",
+    });
+    drag = { card, placeholder, pointerId, offsetY: y - rect.top };
+    pending = null;
+    // Throws if the pointer died right at the hold boundary; finish() still
+    // cleans up via the drag object, so the card can never stay stuck.
+    try { card.setPointerCapture?.(pointerId); } catch { /* keep dragging uncaptured */ }
+  };
+
+  const movePlaceholder = (clientY) => {
+    const center = clientY - drag.offsetY + drag.card.offsetHeight / 2;
+    const cards = [...list.querySelectorAll(".workout-card:not(.dragging)")];
+    const before = cards.find((card) => center < card.getBoundingClientRect().top + card.offsetHeight / 2);
+    if (before) list.insertBefore(drag.placeholder, before);
+    else list.appendChild(drag.placeholder);
+  };
+
+  const finish = () => {
+    clearPending();
+    if (!drag) return;
+    const { card, placeholder } = drag;
+    placeholder.replaceWith(card);
+    card.classList.remove("dragging");
+    card.removeAttribute("style");
+    card.dataset.suppressClick = "true";
+    setTimeout(() => delete card.dataset.suppressClick, 400);
+    drag = null;
+
+    const day = currentDay();
+    if (!day) return;
+    const byExercise = new Map((day.entries || []).map((entry) => [entry.exerciseId, entry]));
+    const entries = [...list.querySelectorAll(".workout-card")]
+      .map((item) => byExercise.get(item.dataset.exerciseId))
+      .filter(Boolean);
+    if (entries.some((entry, index) => entry !== day.entries[index])) {
+      db.updateDay(day.id, { name: day.name, entries }).catch(() => toast("Erro ao salvar ordem."));
+    }
+  };
+
+  list.addEventListener("pointerdown", (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (e.target.closest("button, input, select, textarea, a, .sets-editor")) return;
+    const card = e.target.closest(".workout-card");
+    if (!card || !list.contains(card)) return;
+    clearPending();
+    pending = {
+      card,
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      timer: setTimeout(lift, HOLD_MS),
+    };
+  });
+
+  list.addEventListener("pointermove", (e) => {
+    if (pending && e.pointerId === pending.pointerId) {
+      if (Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > MOVE_TOLERANCE) clearPending();
+      return;
+    }
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    e.preventDefault();
+    drag.card.style.top = `${e.clientY - drag.offsetY}px`;
+    movePlaceholder(e.clientY);
+  }, { passive: false });
+
+  // iOS needs a non-passive touch listener to stop page scrolling after lift.
+  list.addEventListener("touchmove", (e) => {
+    if (drag) e.preventDefault();
+  }, { passive: false });
+  list.addEventListener("pointerup", finish);
+  list.addEventListener("pointercancel", finish);
+  list.addEventListener("pointerleave", (e) => {
+    if (pending && e.pointerId === pending.pointerId) clearPending();
+  });
 }
 
 // Compact card, uniform height: name + target, reference line, one-line
 // note. Muscles live in the Exercícios tab and the detail sheet. Tapping
-// the card body opens the quick-detail sheet; the circle toggles done.
+// the card body opens the quick-detail sheet; the circle toggles its log.
 function buildWorkoutCard(entry, day, logId) {
   const ex = state.exercisesById.get(entry.exerciseId);
   const log = state.logsById.get(logId);
+  const isDone = logDone(log);
   const program = currentProgram();
 
   const card = document.createElement("div");
-  card.className = "workout-card" + (log ? " done" : "");
+  card.className = "workout-card" + (isDone ? " done" : "");
+  card.dataset.exerciseId = entry.exerciseId;
 
   const top = document.createElement("div");
   top.className = "wc-top";
@@ -225,6 +443,7 @@ function buildWorkoutCard(entry, day, logId) {
       db.deleteLog(logId).catch(() => toast("Erro ao remover."));
       toast("Registro removido.");
     } else {
+      clearFinishedTimer();
       const last = lastLogFor(state.logs, entry.exerciseId, todayStr());
       db.saveLog({
         date: todayStr(),
@@ -261,8 +480,14 @@ function buildWorkoutCard(entry, day, logId) {
   const lastEl = document.createElement("span");
   lastEl.className = "wc-last";
   if (ref) {
-    lastEl.innerHTML = `${ref.label}: <b></b>${ref.date ? ` · ${ref.date}` : ""}`;
-    lastEl.querySelector("b").textContent = ref.text;
+    lastEl.appendChild(document.createTextNode(`${ref.label}: `));
+    if (ref.sets) appendStyledSets(lastEl, ref.sets);
+    else {
+      const value = document.createElement("b");
+      value.textContent = ref.text;
+      lastEl.appendChild(value);
+    }
+    if (ref.date) lastEl.appendChild(document.createTextNode(` · ${ref.date}`));
   } else {
     lastEl.innerHTML = "&nbsp;";
   }
@@ -280,6 +505,7 @@ function buildWorkoutCard(entry, day, logId) {
 
   if (ex) {
     card.addEventListener("click", (e) => {
+      if (card.dataset.suppressClick) return;
       if (e.target.closest(".wc-check") || e.target.closest(".sets-editor")) return;
       openDetailSheet(entry.exerciseId);
     });
@@ -327,7 +553,7 @@ function submitDetailForm(e) {
     primaryMuscleId: ex.primaryMuscleId,
     secondaryMuscleIds: ex.secondaryMuscleIds || [],
     otherMuscleIds: ex.otherMuscleIds || [],
-    refWeight: $("det-refweight").value.trim(),
+    refWeight: numericRefWeight("det-refweight"),
     note: $("det-note").value.trim(),
   }).catch(() => toast("Erro ao salvar."));
 
@@ -342,7 +568,7 @@ function openFinishSheet() {
   const today = todayStr();
   const doneLogs = (day.entries || [])
     .map((en) => state.logsById.get(logDocId({ date: today, dayId: day.id, exerciseId: en.exerciseId })))
-    .filter(Boolean);
+    .filter(logDone);
   if (doneLogs.length === 0) return;
 
   $("finish-sub").textContent =
@@ -373,12 +599,12 @@ function confirmFinishWorkout() {
   toast("Treino registrado. Bom descanso!");
 }
 
-// The sets editor lives inside a checked card. Every change re-saves the
+// The sets editor lives inside a card with a log. Every change re-saves the
 // same log doc (deterministic id), so editing stays a single write.
 function buildSetsEditor(entry, day, log) {
   const wrap = document.createElement("div");
   wrap.className = "sets-editor";
-  const sets = (log.sets || []).map((s) => ({ ...s }));
+  const sets = (log.sets || []).map((s) => ({ ...s, done: s.done !== false }));
 
   const save = () => {
     db.saveLog({ ...log, sets }).catch(() => toast("Erro ao salvar."));
@@ -392,7 +618,19 @@ function buildSetsEditor(entry, day, log) {
     n.className = "set-n";
     n.textContent = `Série ${idx + 1}`;
 
+    const done = document.createElement("button");
+    done.type = "button";
+    done.className = "set-check" + (set.done ? " on" : "");
+    done.textContent = "✓";
+    done.setAttribute("aria-label", set.done ? `Desmarcar série ${idx + 1}` : `Concluir série ${idx + 1}`);
+    done.addEventListener("click", () => {
+      sets[idx].done = !sets[idx].done;
+      if (sets[idx].done) clearFinishedTimer();
+      save();
+    });
+
     const repsLab = document.createElement("label");
+    repsLab.className = "set-reps";
     const reps = document.createElement("input");
     reps.type = "number";
     reps.min = "0";
@@ -408,6 +646,7 @@ function buildSetsEditor(entry, day, log) {
     repsLab.append(reps, document.createTextNode("reps"));
 
     const wLab = document.createElement("label");
+    wLab.className = "set-weight";
     const weight = document.createElement("input");
     weight.type = "number";
     weight.min = "0";
@@ -433,7 +672,7 @@ function buildSetsEditor(entry, day, log) {
       save();
     });
 
-    row.append(n, repsLab, wLab, rm);
+    row.append(done, n, wLab, repsLab, rm);
     wrap.appendChild(row);
   });
 
@@ -443,7 +682,7 @@ function buildSetsEditor(entry, day, log) {
   add.textContent = "＋ série";
   add.addEventListener("click", () => {
     const prev = sets[sets.length - 1];
-    sets.push({ reps: prev?.reps ?? entryReps(entry), weight: prev?.weight ?? null });
+    sets.push({ reps: prev?.reps ?? entryReps(entry), weight: prev?.weight ?? null, done: false });
     save();
   });
   wrap.appendChild(add);
@@ -812,7 +1051,7 @@ function submitExerciseForm(e) {
     otherMuscleIds: [...state.draftOthers].filter(
       (id) => id !== primaryMuscleId && !state.draftSecondary.has(id)
     ),
-    refWeight: $("ex-refweight").value.trim(),
+    refWeight: numericRefWeight("ex-refweight"),
     note: $("ex-note").value.trim(),
   };
   const op = state.editingExerciseId
@@ -926,16 +1165,18 @@ function makeSwipeable(row, onDelete) {
 
 function renderHist() {
   $("hist-sessoes").hidden = state.histView !== "sessoes";
+  $("hist-cardio").hidden = state.histView !== "cardio";
   $("hist-progresso").hidden = state.histView !== "progresso";
   document.querySelectorAll("#hist-seg .seg-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === state.histView)
   );
   if (state.histView === "sessoes") renderSessions();
+  else if (state.histView === "cardio") renderCardio();
   else renderProgress();
 }
 
 function renderSessions() {
-  const weeks = weeklyFrequency(state.logs, 12, todayStr());
+  const weeks = weeklyFrequency(state.logs, 12, todayStr(), state.cardio.map((entry) => entry.date));
   $("freq-chart").innerHTML = barChart(
     weeks.map((w) => ({ label: w.label, value: w.count })),
     { showLabels: "ends" }
@@ -964,19 +1205,18 @@ function renderSessions() {
     ul.className = "group-items";
     session.logs.forEach((log) => {
       const li = document.createElement("li");
-      li.className = "item-row";
+      li.className = "item-row session-log-row";
       const main = document.createElement("div");
       main.className = "item-main";
       const name = document.createElement("span");
       name.className = "item-name";
       name.textContent = log.exerciseName || "(exercício)";
       main.appendChild(name);
-      const side = document.createElement("div");
-      side.className = "item-side";
-      const b = document.createElement("b");
-      b.textContent = setsLabel(log.sets) || "feito";
-      side.appendChild(b);
-      li.append(main, side);
+      const sets = document.createElement("span");
+      sets.className = "item-sub session-sets";
+      sets.textContent = setsLabel(log.sets) || "feito";
+      main.appendChild(sets);
+      li.appendChild(main);
       // swipe left (or right-click on desktop) to remove a wrong entry
       makeSwipeable(li, () => {
         db.deleteLog(log.id).catch(() => toast("Erro ao remover."));
@@ -990,6 +1230,55 @@ function renderSessions() {
   });
 
   $("sessions-empty").hidden = sessions.length > 0;
+}
+
+function renderCardio() {
+  const weeks = weeklyCardio(state.cardio, 12, todayStr());
+  $("cardio-chart").innerHTML = barChart(
+    weeks.map((week) => ({ label: fmtDate(week.weekStart), value: week.totalMinutes })),
+    { showLabels: "ends", color: "var(--accent)" }
+  );
+
+  const list = $("cardio-history-list");
+  list.innerHTML = "";
+  const visibleWeeks = weeks.filter((week) => week.totalMinutes > 0).reverse();
+  visibleWeeks.forEach((week) => {
+    const group = document.createElement("section");
+    group.className = "group";
+    const head = document.createElement("div");
+    head.className = "group-head cardio-week-head";
+    const title = document.createElement("span");
+    title.textContent = `Semana de ${fmtDate(week.weekStart)}`;
+    const total = document.createElement("span");
+    total.className = "count";
+    total.textContent = `${week.totalMinutes} min`;
+    head.append(title, total);
+
+    const ul = document.createElement("ul");
+    ul.className = "group-items";
+    [...week.days].reverse().forEach((day) => {
+      const entries = state.cardio.filter((entry) => entry.date === day.date);
+      const li = document.createElement("li");
+      li.className = "item-row cardio-day-row";
+      const main = document.createElement("div");
+      main.className = "item-main";
+      const date = document.createElement("span");
+      date.className = "item-name";
+      date.textContent = fmtDateFull(day.date);
+      const types = document.createElement("span");
+      types.className = "item-sub";
+      types.textContent = entries.map((entry) => entry.typeName || "Cardio").join(" · ");
+      const minutes = document.createElement("span");
+      minutes.className = "item-side";
+      minutes.innerHTML = `<b>${day.minutes} min</b>`;
+      main.append(date, types);
+      li.append(main, minutes);
+      ul.appendChild(li);
+    });
+    group.append(head, ul);
+    list.appendChild(group);
+  });
+  $("cardio-history-empty").hidden = visibleWeeks.length > 0;
 }
 
 function renderProgress() {
@@ -1107,6 +1396,70 @@ function renderMusclesManager() {
   });
 }
 
+function cardioTypeInUse(typeId) {
+  return state.cardio.some((entry) => entry.typeId === typeId);
+}
+
+function renderCardioTypesManager() {
+  const ul = $("cardio-types-list");
+  ul.innerHTML = "";
+  state.cardioTypes.forEach((type, idx) => {
+    const li = document.createElement("li");
+    li.className = "row-line";
+
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.value = type.name;
+    nameInput.maxLength = 40;
+    nameInput.addEventListener("change", () => {
+      const name = nameInput.value.trim();
+      if (!name) {
+        nameInput.value = type.name;
+        return;
+      }
+      db.renameCardioType(type.id, name).catch(() => toast("Erro ao renomear."));
+    });
+
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "icon-btn";
+    up.textContent = "▲";
+    up.disabled = idx === 0;
+    up.setAttribute("aria-label", "Mover para cima");
+    up.addEventListener("click", () =>
+      db.swapCardioTypeOrder(type, state.cardioTypes[idx - 1]).catch(() => toast("Erro ao reordenar."))
+    );
+
+    const down = document.createElement("button");
+    down.type = "button";
+    down.className = "icon-btn";
+    down.textContent = "▼";
+    down.disabled = idx === state.cardioTypes.length - 1;
+    down.setAttribute("aria-label", "Mover para baixo");
+    down.addEventListener("click", () =>
+      db.swapCardioTypeOrder(type, state.cardioTypes[idx + 1]).catch(() => toast("Erro ao reordenar."))
+    );
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "icon-btn del";
+    del.textContent = "✕";
+    del.setAttribute("aria-label", "Excluir tipo");
+    del.addEventListener("click", () => {
+      if (cardioTypeInUse(type.id)) {
+        toast(`"${type.name}" está em uso por registros de cardio.`);
+        return;
+      }
+      if (confirm(`Excluir o tipo "${type.name}"?`)) {
+        db.deleteCardioType(type.id).catch(() => toast("Erro ao excluir."));
+      }
+    });
+
+    li.append(nameInput, up, down, del);
+    ul.appendChild(li);
+  });
+}
+
 // ---------- backup ----------
 
 function buildBackup() {
@@ -1116,6 +1469,7 @@ function buildBackup() {
     version: APP_VERSION,
     exportedAt: new Date().toISOString(),
     muscles: state.muscles.map(({ id, name, order }) => ({ id, name, order })),
+    cardioTypes: state.cardioTypes.map(({ id, name, order }) => ({ id, name, order })),
     exercises: state.exercises.map((e) => ({
       id: e.id,
       name: e.name,
@@ -1145,6 +1499,14 @@ function buildBackup() {
       dayName: l.dayName || "",
       programName: l.programName || "",
       sets: l.sets || [],
+    })),
+    cardio: state.cardio.map((entry) => ({
+      id: entry.id,
+      date: entry.date,
+      typeId: entry.typeId,
+      typeName: entry.typeName || "",
+      minutes: entry.minutes,
+      note: entry.note || "",
     })),
   };
 }
@@ -1208,6 +1570,7 @@ function importBackupFile(file) {
 const TIMER_KEY = "gym:timerEnd";
 let timerInterval = null;
 let timerActive = false;
+let timerFinished = false;
 let audioCtx = null;
 
 function ensureAudio() {
@@ -1222,18 +1585,21 @@ function ensureAudio() {
 function beep() {
   if (!audioCtx) return;
   try {
-    for (let i = 0; i < 3; i++) {
+    const t = audioCtx.currentTime;
+    const addTone = (frequency, volume) => {
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.frequency.value = 880;
+      osc.frequency.setValueAtTime(frequency, t);
       osc.connect(gain);
       gain.connect(audioCtx.destination);
-      const t = audioCtx.currentTime + i * 0.25;
-      gain.gain.setValueAtTime(0.25, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(volume, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 1);
       osc.start(t);
-      osc.stop(t + 0.2);
-    }
+      osc.stop(t + 1.05);
+    };
+    addTone(880, 0.18);
+    addTone(1760, 0.045);
   } catch {
     // sem áudio, sem problema
   }
@@ -1241,8 +1607,17 @@ function beep() {
 
 function startTimer(secs) {
   ensureAudio(); // unlocked here, on the user's tap (iOS requirement)
+  timerFinished = false;
+  $("timer-bar").classList.remove("flash");
   localStorage.setItem(TIMER_KEY, String(Date.now() + secs * 1000));
   runTimer();
+}
+
+function clearFinishedTimer() {
+  if (!timerFinished) return;
+  timerFinished = false;
+  $("timer-bar").classList.remove("flash");
+  updateTimerVisibility();
 }
 
 function cancelTimer() {
@@ -1250,6 +1625,8 @@ function cancelTimer() {
   clearInterval(timerInterval);
   timerInterval = null;
   timerActive = false;
+  timerFinished = false;
+  $("timer-bar").classList.remove("flash");
   updateTimerVisibility();
 }
 
@@ -1267,25 +1644,87 @@ function runTimer() {
       localStorage.removeItem(TIMER_KEY);
       if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
       beep();
-      const bar = $("timer-bar");
-      bar.classList.add("flash");
-      setTimeout(() => {
-        bar.classList.remove("flash");
-        timerActive = false;
-        updateTimerVisibility();
-      }, 1400);
+      timerActive = false;
+      timerFinished = true;
+      $("timer-bar").classList.add("flash");
+      updateTimerVisibility();
     }
   };
   tick();
   timerInterval = setInterval(tick, 250);
 }
 
-// The bar shows only while a countdown is active, and only on the Treino tab.
+// The bar shows for an active or finished countdown, only on the Treino tab.
 function updateTimerVisibility() {
-  $("timer-bar").hidden = !timerActive || state.tab !== "treino";
+  $("timer-bar").hidden = (!timerActive && !timerFinished) || state.tab !== "treino";
 }
 
 // ---------- snapshot handlers ----------
+
+const REFWEIGHT_MIGRATION_KEY = "gym:migrate-refweight-v6";
+const SMITH_SEED_KEY = "gym:seed-smith-v6";
+let refWeightMigrationStarted = false;
+let smithSeedStarted = false;
+
+async function migrateRefWeights(exercises) {
+  if (refWeightMigrationStarted || localStorage.getItem(REFWEIGHT_MIGRATION_KEY)) return;
+  refWeightMigrationStarted = true;
+  const numericOnly = /^\d+(?:[.,]\d+)?$/;
+  const writes = [];
+
+  exercises.forEach((ex) => {
+    const oldRef = String(ex.refWeight || "").trim();
+    if (!oldRef || numericOnly.test(oldRef)) return;
+
+    const match = oldRef.match(/\d+(?:[.,]\d+)?/);
+    const refWeight = match ? match[0].replace(",", ".") : "";
+    // drop a leftover unit right after the number ("12 kg cada" -> "cada")
+    const remainder = (match ? oldRef.replace(match[0], "") : oldRef)
+      .replace(/^\s*kg\b\.?/i, "")
+      .trim();
+    const oldNote = String(ex.note || "").trim();
+    const note = remainder ? [oldNote, remainder].filter(Boolean).join("\n") : oldNote;
+    if (refWeight === oldRef && note === oldNote) return;
+
+    writes.push(db.updateExercise(ex.id, {
+      name: ex.name,
+      primaryMuscleId: ex.primaryMuscleId,
+      secondaryMuscleIds: ex.secondaryMuscleIds || [],
+      otherMuscleIds: ex.otherMuscleIds || [],
+      refWeight,
+      note,
+    }));
+  });
+
+  try {
+    await Promise.all(writes);
+    localStorage.setItem(REFWEIGHT_MIGRATION_KEY, "1");
+  } catch {
+    toast("Erro ao atualizar pesos de referência.");
+  }
+}
+
+async function seedSmithExercise(exercises) {
+  if (smithSeedStarted || localStorage.getItem(SMITH_SEED_KEY)) return;
+  smithSeedStarted = true;
+  if (exercises.some((ex) => ex.id === "ex-agachamento-smith")) {
+    localStorage.setItem(SMITH_SEED_KEY, "1");
+    return;
+  }
+  try {
+    await db.createExerciseWithId("ex-agachamento-smith", {
+      name: "Agachamento smith",
+      primaryMuscleId: "mus-quadriceps",
+      secondaryMuscleIds: ["mus-gluteos", "mus-posterior"],
+      otherMuscleIds: [],
+      refWeight: "",
+      note: "",
+    });
+    localStorage.setItem(SMITH_SEED_KEY, "1");
+  } catch {
+    toast("Erro ao adicionar Agachamento smith.");
+  }
+}
 
 function onMuscles(muscles) {
   if (muscles.length === 0 && !state.seededMuscles) {
@@ -1308,6 +1747,8 @@ function onExercises(exercises) {
   }
   state.exercises = exercises;
   state.exercisesById = new Map(exercises.map((e) => [e.id, e]));
+  migrateRefWeights(exercises);
+  seedSmithExercise(exercises);
   renderExercises();
   renderTreino();
 }
@@ -1334,6 +1775,23 @@ function onLogs(logs) {
   state.logsById = new Map(logs.map((l) => [l.id, l]));
   renderTreino();
   renderExercises();
+  renderHist();
+}
+
+function onCardioTypes(types) {
+  if (types.length === 0 && !state.seededCardioTypes) {
+    state.seededCardioTypes = true;
+    db.seedCardioTypes().catch(() => toast("Erro ao criar tipos de cardio iniciais."));
+    return;
+  }
+  state.cardioTypes = sortByOrder(types);
+  renderCardioTypesManager();
+}
+
+function onCardio(cardio) {
+  state.cardio = cardio;
+  renderTodayCardio();
+  renderCardioTypesManager();
   renderHist();
 }
 
@@ -1371,6 +1829,8 @@ function startListeners() {
   db.listenPrograms(onPrograms, err);
   db.listenDays(onDays, err);
   db.listenLogs(onLogs, err);
+  db.listenCardioTypes(onCardioTypes, err);
+  db.listenCardio(onCardio, err);
 }
 
 const LOGIN_ERRORS = {
@@ -1434,6 +1894,8 @@ function wire() {
   });
   $("btn-finish-workout").addEventListener("click", openFinishSheet);
   $("btn-finish-confirm").addEventListener("click", confirmFinishWorkout);
+  $("btn-add-cardio").addEventListener("click", openCardioSheet);
+  $("cardio-form").addEventListener("submit", submitCardio);
   $("detail-form").addEventListener("submit", submitDetailForm);
   $("program-add-form").addEventListener("submit", (e) => {
     e.preventDefault();
@@ -1501,6 +1963,14 @@ function wire() {
     const maxOrder = state.muscles.reduce((m, s) => Math.max(m, s.order ?? 0), -1);
     db.addMuscle(name, maxOrder + 1).catch(() => toast("Erro ao adicionar grupo."));
     $("muscle-add-name").value = "";
+  });
+  $("cardio-type-add-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = $("cardio-type-add-name").value.trim();
+    if (!name) return;
+    const maxOrder = state.cardioTypes.reduce((m, type) => Math.max(m, type.order ?? 0), -1);
+    db.addCardioType(name, maxOrder + 1).catch(() => toast("Erro ao adicionar tipo."));
+    $("cardio-type-add-name").value = "";
   });
   $("btn-export").addEventListener("click", exportBackup);
   $("btn-import").addEventListener("click", () => $("import-file").click());

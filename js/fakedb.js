@@ -5,7 +5,7 @@
 // charts render meaningfully.
 
 import { normalize, logDocId, todayStr, addDaysStr, entryReps, parseRefWeight } from "./logic.js";
-import { DEFAULT_MUSCLES, SEED_EXERCISES, SEED_PROGRAMS } from "./seed.js";
+import { DEFAULT_MUSCLES, DEFAULT_CARDIO_TYPES, SEED_EXERCISES, SEED_PROGRAMS } from "./seed.js";
 
 const ts = (ms = Date.now()) => ({ toMillis: () => ms });
 let nextId = 1;
@@ -22,6 +22,7 @@ function rng() {
 
 const store = {
   muscles: DEFAULT_MUSCLES.map(({ key, name }, i) => ({ id: `mus-${key}`, name, order: i })),
+  cardioTypes: DEFAULT_CARDIO_TYPES.map(({ key, name }, i) => ({ id: `ct-${key}`, name, order: i })),
   exercises: SEED_EXERCISES.map((ex) => ({
     id: `ex-${ex.slug}`,
     name: ex.name,
@@ -55,6 +56,7 @@ const store = {
     }))
   ),
   logs: [],
+  cardio: [],
 };
 
 // ---------- generated history ----------
@@ -84,6 +86,7 @@ function baseWeight(exerciseId) {
       const sets = Array.from({ length: entry.targetSets }, () => ({
         reps: Math.max(1, entryReps(entry) - Math.floor(rng() * 3)),
         weight,
+        done: true,
       }));
       const ex = store.exercises.find((e) => e.id === entry.exerciseId);
       const log = {
@@ -105,9 +108,37 @@ function baseWeight(exerciseId) {
   }
 })();
 
+(function generateCardio() {
+  const today = todayStr();
+  const types = store.cardioTypes.filter((type) => type.id !== "ct-outro");
+  for (let week = 5; week >= 0; week--) {
+    const count = 2 + Math.floor(rng() * 3);
+    const usedDays = new Set();
+    for (let i = 0; i < count; i++) {
+      let back;
+      do {
+        back = week * 7 + 1 + Math.floor(rng() * 6);
+      } while (usedDays.has(back));
+      usedDays.add(back);
+      if (back > 42) continue;
+      const type = types[Math.floor(rng() * types.length)];
+      const date = addDaysStr(today, -back);
+      store.cardio.push({
+        id: `cardio-demo-${week}-${i}`,
+        date,
+        typeId: type.id,
+        typeName: type.name,
+        minutes: 15 + Math.floor(rng() * 26),
+        note: rng() < 0.25 ? "Ritmo moderado" : "",
+        ts: ts(new Date(date + "T07:00").getTime() + i * 60000),
+      });
+    }
+  }
+})();
+
 // ---------- listener plumbing (same contract as db.js) ----------
 
-const listeners = { muscles: [], exercises: [], programs: [], days: [], logs: [] };
+const listeners = { muscles: [], exercises: [], programs: [], days: [], logs: [], cardioTypes: [], cardio: [] };
 const emit = {};
 for (const key of Object.keys(listeners)) {
   emit[key] = () => listeners[key].forEach((cb) => cb(store[key].map((x) => ({ ...x }))));
@@ -128,10 +159,13 @@ export const listenExercises = listen("exercises");
 export const listenPrograms = listen("programs");
 export const listenDays = listen("days");
 export const listenLogs = listen("logs");
+export const listenCardioTypes = listen("cardioTypes");
+export const listenCardio = listen("cardio");
 
 export async function seedMuscles() {}
 export async function seedExercises() {}
 export async function seedPrograms() {}
+export async function seedCardioTypes() {}
 
 // ---------- muscles ----------
 
@@ -154,6 +188,27 @@ export async function deleteMuscle(mid) {
   emit.muscles();
 }
 
+// ---------- cardio types ----------
+
+export async function addCardioType(name, order) {
+  store.cardioTypes.push({ id: id("ct"), name, order });
+  emit.cardioTypes();
+}
+export async function renameCardioType(tid, name) {
+  store.cardioTypes.find((type) => type.id === tid).name = name;
+  emit.cardioTypes();
+}
+export async function swapCardioTypeOrder(a, b) {
+  const ta = store.cardioTypes.find((type) => type.id === a.id);
+  const tb = store.cardioTypes.find((type) => type.id === b.id);
+  [ta.order, tb.order] = [b.order, a.order];
+  emit.cardioTypes();
+}
+export async function deleteCardioType(tid) {
+  store.cardioTypes = store.cardioTypes.filter((type) => type.id !== tid);
+  emit.cardioTypes();
+}
+
 // ---------- exercises ----------
 
 const exerciseData = (data) => ({
@@ -168,6 +223,12 @@ const exerciseData = (data) => ({
 
 export async function createExercise(data) {
   store.exercises.push({ id: id("ex"), ...exerciseData(data), createdAt: ts(), updatedAt: ts() });
+  emit.exercises();
+}
+export async function createExerciseWithId(eid, data) {
+  const existing = store.exercises.find((e) => e.id === eid);
+  if (existing) Object.assign(existing, exerciseData(data), { updatedAt: ts() });
+  else store.exercises.push({ id: eid, ...exerciseData(data), createdAt: ts(), updatedAt: ts() });
   emit.exercises();
 }
 export async function updateExercise(eid, data) {
@@ -235,6 +296,17 @@ export async function deleteLog(lid) {
   emit.logs();
 }
 
+// ---------- cardio ----------
+
+export async function createCardio(data) {
+  store.cardio.push({ id: id("cardio"), ...data, minutes: Math.floor(Number(data.minutes)), note: data.note || "", ts: ts() });
+  emit.cardio();
+}
+export async function deleteCardio(cid) {
+  store.cardio = store.cardio.filter((entry) => entry.id !== cid);
+  emit.cardio();
+}
+
 // ---------- backup ----------
 
 export async function importBackup(data) {
@@ -244,6 +316,7 @@ export async function importBackup(data) {
     else list.push(item);
   };
   (data.muscles || []).forEach((m) => upsert(store.muscles, { ...m }));
+  (data.cardioTypes || []).forEach((type) => upsert(store.cardioTypes, { ...type }));
   (data.exercises || []).forEach((e) =>
     upsert(store.exercises, { ...e, nameLower: normalize(e.name), createdAt: ts(), updatedAt: ts() })
   );
@@ -252,5 +325,6 @@ export async function importBackup(data) {
   );
   (data.days || []).forEach((d) => upsert(store.days, { ...d }));
   (data.logs || []).forEach((l) => upsert(store.logs, { ...l, ts: ts() }));
+  (data.cardio || []).forEach((entry) => upsert(store.cardio, { ...entry, ts: ts() }));
   Object.values(emit).forEach((fn) => fn());
 }

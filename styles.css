@@ -87,6 +87,9 @@ input, select { font: inherit; }
 }
 .field textarea { resize: vertical; font: inherit; }
 .field input:focus, .field select:focus, .field textarea:focus { outline: 2px solid var(--ink); border-color: transparent; }
+.field .input-unit { display: flex; align-items: center; gap: 9px; margin: 0; }
+.field .input-unit input { flex: 1; min-width: 0; width: auto; }
+.input-unit-label { flex: none; color: var(--muted); font-size: 14px; font-weight: 700; }
 
 .field-row { display: flex; gap: 10px; }
 .field-row .field { flex: 1; }
@@ -196,6 +199,18 @@ input, select { font: inherit; }
   box-shadow: 0 1px 3px rgba(60, 45, 30, 0.05);
 }
 .workout-card.done { border-color: var(--accent); background: #fdf0e7; }
+.workout-card.dragging {
+  z-index: 100;
+  transform: scale(1.02);
+  box-shadow: 0 12px 28px rgba(60, 45, 30, 0.2);
+  touch-action: none;
+  user-select: none;
+}
+.workout-placeholder {
+  flex: none;
+  border: 2px dashed var(--accent-soft);
+  border-radius: var(--radius);
+}
 
 .wc-top { display: flex; align-items: center; gap: 12px; }
 .wc-check {
@@ -242,6 +257,8 @@ input, select { font: inherit; }
   text-overflow: ellipsis;
 }
 .wc-last b { color: var(--ink); }
+.wc-last-weight { color: var(--ink); font-weight: 800; }
+.wc-last-reps { color: var(--muted); font-size: 11px; }
 .wc-note {
   display: block;
   font-size: 12px;
@@ -252,7 +269,7 @@ input, select { font: inherit; }
   text-overflow: ellipsis;
 }
 
-/* sets editor (visible while checked) */
+/* sets editor (visible while a log exists) */
 .sets-editor { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--accent-soft); }
 .set-row {
   display: flex;
@@ -261,6 +278,18 @@ input, select { font: inherit; }
   margin-bottom: 8px;
 }
 .set-row .set-n { width: 48px; font-size: 13px; color: var(--muted); font-weight: 800; flex: none; }
+.set-check {
+  width: 27px; height: 27px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--card);
+  color: transparent;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  font-weight: 800;
+}
+.set-check.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .set-row label {
   flex: 1;
   display: flex;
@@ -269,6 +298,8 @@ input, select { font: inherit; }
   font-size: 12px;
   color: var(--muted);
 }
+.set-row label.set-weight { flex: 1.15; }
+.set-row label.set-reps { flex: 0.85; font-size: 11px; }
 .set-row input {
   width: 100%;
   min-width: 0;
@@ -280,6 +311,8 @@ input, select { font: inherit; }
   font-weight: 700;
 }
 .set-row input:focus { outline: 2px solid var(--ink); border-color: transparent; }
+.set-row .set-weight input { font-size: 17px; font-weight: 800; color: var(--ink); }
+.set-row .set-reps input { font-size: 14px; font-weight: 600; color: var(--muted); }
 .set-remove {
   width: 34px; height: 34px;
   flex: none;
@@ -290,6 +323,39 @@ input, select { font: inherit; }
 .btn-add-set { font-size: 14px; font-weight: 800; color: var(--accent-ink); padding: 4px 2px; }
 
 .finish-btn { margin-top: 14px; }
+
+.cardio-today { margin-top: 12px; }
+.cardio-add-btn { border-color: var(--accent); color: var(--accent-ink); }
+.today-cardio-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.today-cardio-list:empty { display: none; }
+.today-cardio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 8px 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.today-cardio-row:last-child { border-bottom: none; }
+.today-cardio-main { flex: 1; min-width: 0; }
+.today-cardio-title { display: block; font-size: 14px; font-weight: 800; }
+.today-cardio-note {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.today-cardio-remove { width: 36px; height: 36px; color: var(--danger); flex: none; }
 
 /* ---------- generic list rows ---------- */
 .list { display: flex; flex-direction: column; gap: 10px; }
@@ -333,6 +399,16 @@ input, select { font: inherit; }
 .item-sub { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-side { flex: none; text-align: right; font-size: 12px; color: var(--muted); }
 .item-side b { color: var(--ink); display: block; font-size: 14px; }
+.session-log-row .swipe-content { align-items: flex-start; }
+.session-log-row .session-sets {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
 
 .empty { color: var(--muted); text-align: center; padding: 40px 20px; }
 
@@ -404,6 +480,8 @@ input, select { font: inherit; }
 
 .session-head { display: flex; flex-direction: column; }
 .session-head .session-prog { font-size: 11px; letter-spacing: 0.4px; }
+.cardio-week-head { justify-content: space-between; }
+.cardio-day-row { cursor: default; }
 
 .prog-table { list-style: none; margin: 0; padding: 0; }
 .prog-table li {
@@ -551,7 +629,7 @@ input, select { font: inherit; }
 }
 .timer-preset:active { background: var(--brand); color: var(--brand-ink); }
 
-/* floating bar: exists only while a countdown runs */
+/* floating bar: exists while a countdown runs or waits to be dismissed */
 #timer-bar {
   position: fixed;
   left: 0; right: 0;
@@ -590,9 +668,9 @@ input, select { font: inherit; }
   font-weight: 800;
   display: flex; align-items: center; justify-content: center;
 }
-#timer-bar.flash #timer-run { animation: timerflash 0.4s 3; }
+#timer-bar.flash { animation: timerflash 0.8s ease-in-out infinite; }
 @keyframes timerflash {
-  50% { background: var(--accent); }
+  50% { opacity: 0.62; transform: scale(0.985); }
 }
 
 /* ---------- tab bar ---------- */

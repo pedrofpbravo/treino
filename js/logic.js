@@ -76,7 +76,43 @@ const cloneSets = (sets) =>
   (Array.isArray(sets) ? sets : []).map((s) => ({
     reps: Number.isFinite(Number(s.reps)) ? Number(s.reps) : null,
     weight: s.weight === null || s.weight === undefined || s.weight === "" ? null : Number(s.weight),
+    done: s.done !== false,
   }));
+
+// Logs written before per-set checks have no `done` field. They remain
+// completed without a data migration; only an explicit false is pending.
+export function logDone(log) {
+  return Array.isArray(log?.sets) && log.sets.length > 0 && log.sets.every((s) => s.done !== false);
+}
+
+// Days trained since the most recently completed program cycle. A session is
+// one (date, day) pair; exercises within the same session count only once.
+export function cycleDays(logs, programId, dayIds) {
+  const validDays = new Set(dayIds || []);
+  if (validDays.size === 0) return new Set();
+
+  const sessions = new Map();
+  for (const log of logs || []) {
+    if (log.programId !== programId || !validDays.has(log.dayId) || !log.date) continue;
+    const key = `${log.date}|${log.dayId}`;
+    const stamp = tsMillis(log);
+    const previous = sessions.get(key);
+    if (!previous || stamp < previous.stamp) {
+      sessions.set(key, { date: log.date, dayId: log.dayId, stamp });
+    }
+  }
+
+  const trained = new Set();
+  [...sessions.values()]
+    .sort((a, b) =>
+      a.date.localeCompare(b.date) || a.stamp - b.stamp || a.dayId.localeCompare(b.dayId)
+    )
+    .forEach(({ dayId }) => {
+      trained.add(dayId);
+      if (trained.size === validDays.size) trained.clear();
+    });
+  return trained;
+}
 
 // A day entry's rep target is a single number. New docs store `reps`;
 // docs written before v2 carried a repMin-repMax range and are read as the
@@ -92,15 +128,15 @@ export function parseRefWeight(refWeight) {
   return m ? Number(m[0]) : null;
 }
 
-// Sets to pre-fill when an exercise is checked: last session verbatim,
-// else the day entry's target reps at the reference weight.
+// Sets to pre-fill when an exercise is checked: values from the last session,
+// else the day entry's target reps at the reference weight. New sets are pending.
 export function prefillSets(lastLog, entry, refWeightNum = null) {
   if (lastLog && Array.isArray(lastLog.sets) && lastLog.sets.length > 0) {
-    return cloneSets(lastLog.sets);
+    return cloneSets(lastLog.sets).map((s) => ({ ...s, done: false }));
   }
   const n = Math.max(1, Number(entry?.targetSets) || 3);
   const reps = entryReps(entry);
-  return Array.from({ length: n }, () => ({ reps, weight: refWeightNum }));
+  return Array.from({ length: n }, () => ({ reps, weight: refWeightNum, done: false }));
 }
 
 // "3×12": always a single rep number.
@@ -111,20 +147,20 @@ export function targetLabel(entry) {
 
 const fmtKg = (w) => `${String(w).replace(".", ",")}kg`;
 
-// Compact sets summary: "3×10 @ 40kg", "10/10/8 @ 40kg", or per-set pairs
-// when weights differ. Weightless sets show reps only.
-export function setsLabel(sets) {
+// Structured, weight-first set summaries for renderers that style weight and
+// reps separately. Weightless sets keep their useful reps value on its own.
+export function setsParts(sets) {
   const list = cloneSets(sets).filter((s) => s.reps !== null || s.weight !== null);
-  if (list.length === 0) return "";
-  const weights = [...new Set(list.map((s) => s.weight))];
-  if (weights.length === 1) {
-    const reps = list.map((s) => (s.reps === null ? "?" : s.reps));
-    const sameReps = new Set(reps).size === 1;
-    const repsPart = sameReps ? `${list.length}×${reps[0]}` : reps.join("/");
-    return weights[0] === null ? repsPart : `${repsPart} @ ${fmtKg(weights[0])}`;
-  }
-  return list
-    .map((s) => `${s.weight === null ? "?" : fmtKg(s.weight)}×${s.reps === null ? "?" : s.reps}`)
+  return list.map((s) => ({
+    weight: s.weight === null ? "" : fmtKg(s.weight),
+    reps: s.reps === null ? "?" : String(s.reps),
+  }));
+}
+
+// Plain-text equivalent used by history, summaries and catalog rows.
+export function setsLabel(sets) {
+  return setsParts(sets)
+    .map((s) => (s.weight ? `${s.weight}×${s.reps}` : s.reps))
     .join(" · ");
 }
 
@@ -196,11 +232,13 @@ export function exercisesFromLogs(logs) {
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "pt"));
 }
 
-// Sessions per week for the last nWeeks (including the current one),
+// Distinct trained days per week for the last nWeeks (including the current
+// one), combining workout logs with optional extra date strings.
 // oldest first: [{start, label, count}].
-export function weeklyFrequency(logs, nWeeks, today) {
-  const sessions = new Set();
-  for (const log of logs) sessions.add(`${log.date}|${log.dayId}`);
+export function weeklyFrequency(logs, nWeeks, today, extraDates = []) {
+  const trainedDates = new Set();
+  for (const log of logs) if (log.date) trainedDates.add(log.date);
+  for (const date of extraDates) if (date) trainedDates.add(date);
   const thisWeek = weekStartStr(today);
   const weeks = [];
   for (let i = nWeeks - 1; i >= 0; i--) {
@@ -208,12 +246,42 @@ export function weeklyFrequency(logs, nWeeks, today) {
     weeks.push({ start, label: fmtDate(start), count: 0 });
   }
   const first = weeks[0].start;
-  for (const key of sessions) {
-    const ws = weekStartStr(key.slice(0, 10));
+  for (const date of trainedDates) {
+    const ws = weekStartStr(date);
     if (ws < first) continue;
     const w = weeks.find((x) => x.start === ws);
     if (w) w.count++;
   }
+  return weeks;
+}
+
+// Cardio minutes per week for the last nWeeks (including the current one),
+// oldest first. Multiple entries on the same date are summed into one day.
+export function weeklyCardio(cardio, nWeeks = 12, today = todayStr()) {
+  const thisWeek = weekStartStr(today);
+  const weeks = [];
+  const byStart = new Map();
+  for (let i = nWeeks - 1; i >= 0; i--) {
+    const weekStart = addDaysStr(thisWeek, -7 * i);
+    const week = { weekStart, totalMinutes: 0, days: [] };
+    weeks.push(week);
+    byStart.set(weekStart, week);
+  }
+
+  const daily = new Map();
+  for (const entry of cardio || []) {
+    if (!entry.date) continue;
+    const minutes = Math.max(0, Math.floor(Number(entry.minutes)) || 0);
+    if (!minutes) continue;
+    daily.set(entry.date, (daily.get(entry.date) || 0) + minutes);
+  }
+  for (const [date, minutes] of daily) {
+    const week = byStart.get(weekStartStr(date));
+    if (!week) continue;
+    week.days.push({ date, minutes });
+    week.totalMinutes += minutes;
+  }
+  weeks.forEach((week) => week.days.sort((a, b) => a.date.localeCompare(b.date)));
   return weeks;
 }
 

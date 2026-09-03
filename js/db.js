@@ -29,7 +29,7 @@ import {
 
 import { firebaseConfig } from "./config.js";
 import { normalize, logDocId } from "./logic.js";
-import { DEFAULT_MUSCLES, SEED_EXERCISES, SEED_PROGRAMS } from "./seed.js";
+import { DEFAULT_MUSCLES, DEFAULT_CARDIO_TYPES, SEED_EXERCISES, SEED_PROGRAMS } from "./seed.js";
 
 let app = null;
 let auth = null;
@@ -81,6 +81,8 @@ export const listenExercises = listenCollection("exercises");
 export const listenPrograms = listenCollection("programs");
 export const listenDays = listenCollection("days");
 export const listenLogs = listenCollection("logs");
+export const listenCardioTypes = listenCollection("cardioTypes");
+export const listenCardio = listenCollection("cardio");
 
 // ---------- first-run seeding (fixed doc IDs make it idempotent even if
 // two devices seed at the same time) ----------
@@ -89,6 +91,14 @@ export function seedMuscles() {
   const batch = writeBatch(fs);
   DEFAULT_MUSCLES.forEach(({ key, name }, i) => {
     batch.set(doc(fs, "muscles", `mus-${key}`), { name, order: i });
+  });
+  return batch.commit();
+}
+
+export function seedCardioTypes() {
+  const batch = writeBatch(fs);
+  DEFAULT_CARDIO_TYPES.forEach(({ key, name }, i) => {
+    batch.set(doc(fs, "cardioTypes", `ct-${key}`), { name, order: i });
   });
   return batch.commit();
 }
@@ -160,6 +170,27 @@ export function deleteMuscle(id) {
   return deleteDoc(doc(fs, "muscles", id));
 }
 
+// ---------- cardio types ----------
+
+export function addCardioType(name, order) {
+  return setDoc(doc(collection(fs, "cardioTypes")), { name, order });
+}
+
+export function renameCardioType(id, name) {
+  return updateDoc(doc(fs, "cardioTypes", id), { name });
+}
+
+export function swapCardioTypeOrder(a, b) {
+  const batch = writeBatch(fs);
+  batch.update(doc(fs, "cardioTypes", a.id), { order: b.order });
+  batch.update(doc(fs, "cardioTypes", b.id), { order: a.order });
+  return batch.commit();
+}
+
+export function deleteCardioType(id) {
+  return deleteDoc(doc(fs, "cardioTypes", id));
+}
+
 // ---------- exercises ----------
 
 const exerciseData = ({ name, primaryMuscleId, secondaryMuscleIds, otherMuscleIds, refWeight, note }) => ({
@@ -175,6 +206,13 @@ const exerciseData = ({ name, primaryMuscleId, secondaryMuscleIds, otherMuscleId
 
 export function createExercise(data) {
   return setDoc(doc(collection(fs, "exercises")), {
+    ...exerciseData(data),
+    createdAt: serverTimestamp(),
+  });
+}
+
+export function createExerciseWithId(id, data) {
+  return setDoc(doc(fs, "exercises", id), {
     ...exerciseData(data),
     createdAt: serverTimestamp(),
   });
@@ -267,6 +305,23 @@ export function deleteLog(logId) {
   return deleteDoc(doc(fs, "logs", logId));
 }
 
+// ---------- cardio ----------
+
+export function createCardio(data) {
+  return setDoc(doc(collection(fs, "cardio")), {
+    date: data.date,
+    typeId: data.typeId,
+    typeName: data.typeName,
+    minutes: Math.floor(Number(data.minutes)),
+    note: data.note || "",
+    ts: serverTimestamp(),
+  });
+}
+
+export function deleteCardio(id) {
+  return deleteDoc(doc(fs, "cardio", id));
+}
+
 // ---------- backup ----------
 // Restores a backup produced by "Exportar backup". Writes preserve the
 // original doc ids so every cross-reference stays intact. Existing docs
@@ -279,6 +334,11 @@ export async function importBackup(data) {
   (data.muscles || []).forEach((m) => {
     if (!m.id || !m.name) return;
     writes.push([doc(fs, "muscles", m.id), { name: m.name, order: m.order ?? 0 }]);
+  });
+
+  (data.cardioTypes || []).forEach((type) => {
+    if (!type.id || !type.name) return;
+    writes.push([doc(fs, "cardioTypes", type.id), { name: type.name, order: type.order ?? 0 }]);
   });
 
   (data.exercises || []).forEach((e) => {
@@ -327,6 +387,18 @@ export async function importBackup(data) {
       dayName: l.dayName || "",
       programName: l.programName || "",
       sets: Array.isArray(l.sets) ? l.sets : [],
+      ts: serverTimestamp(),
+    }]);
+  });
+
+  (data.cardio || []).forEach((entry) => {
+    if (!entry.id || !entry.date || !entry.typeId || !entry.typeName || !(Number(entry.minutes) > 0)) return;
+    writes.push([doc(fs, "cardio", entry.id), {
+      date: entry.date,
+      typeId: entry.typeId,
+      typeName: entry.typeName,
+      minutes: Math.floor(Number(entry.minutes)),
+      note: entry.note || "",
       ts: serverTimestamp(),
     }]);
   });
