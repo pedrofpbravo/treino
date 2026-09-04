@@ -19,6 +19,8 @@ export function todayStr(d = new Date()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
 function dateFromStr(dateStr) {
   const [y, m, d] = dateStr.slice(0, 10).split("-").map(Number);
   return new Date(y, m - 1, d);
@@ -28,6 +30,11 @@ export function fmtDate(dateStr) {
   const d = dateFromStr(dateStr);
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
 }
+
+export const fmtDateShortMonth = (dateStr) => {
+  const d = dateFromStr(dateStr);
+  return `${pad(d.getDate())}/${MONTHS[d.getMonth()]}`;
+};
 
 const WEEKDAYS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 
@@ -86,9 +93,10 @@ export function logDone(log) {
 }
 
 // Days trained since the most recently completed program cycle. A session is
-// one (date, day) pair; exercises within the same session count only once.
-export function cycleDays(logs, programId, dayIds) {
-  const validDays = new Set(dayIds || []);
+// complete only when every current day entry has a completed log.
+export function cycleDays(logs, programId, days) {
+  const programDays = (days || []).filter((day) => day.programId === programId);
+  const validDays = new Set(programDays.map((day) => day.id));
   if (validDays.size === 0) return new Set();
 
   const sessions = new Map();
@@ -96,14 +104,21 @@ export function cycleDays(logs, programId, dayIds) {
     if (log.programId !== programId || !validDays.has(log.dayId) || !log.date) continue;
     const key = `${log.date}|${log.dayId}`;
     const stamp = tsMillis(log);
-    const previous = sessions.get(key);
-    if (!previous || stamp < previous.stamp) {
-      sessions.set(key, { date: log.date, dayId: log.dayId, stamp });
-    }
+    if (!sessions.has(key)) sessions.set(key, { date: log.date, dayId: log.dayId, stamp, logs: [] });
+    const session = sessions.get(key);
+    session.stamp = Math.min(session.stamp, stamp);
+    session.logs.push(log);
   }
 
   const trained = new Set();
   [...sessions.values()]
+    .filter((session) => {
+      const day = programDays.find((item) => item.id === session.dayId);
+      const entries = Array.isArray(day?.entries) ? day.entries : [];
+      return entries.length > 0 && entries.every((entry) =>
+        session.logs.some((log) => log.exerciseId === entry.exerciseId && logDone(log))
+      );
+    })
     .sort((a, b) =>
       a.date.localeCompare(b.date) || a.stamp - b.stamp || a.dayId.localeCompare(b.dayId)
     )
@@ -147,8 +162,8 @@ export function targetLabel(entry) {
 
 const fmtKg = (w) => `${String(w).replace(".", ",")}kg`;
 
-// Structured, weight-first set summaries for renderers that style weight and
-// reps separately. Weightless sets keep their useful reps value on its own.
+// Structured set summaries for renderers that style weight and reps separately.
+// Weightless sets keep their useful reps value on its own.
 export function setsParts(sets) {
   const list = cloneSets(sets).filter((s) => s.reps !== null || s.weight !== null);
   return list.map((s) => ({
@@ -160,7 +175,7 @@ export function setsParts(sets) {
 // Plain-text equivalent used by history, summaries and catalog rows.
 export function setsLabel(sets) {
   return setsParts(sets)
-    .map((s) => (s.weight ? `${s.weight}×${s.reps}` : s.reps))
+    .map((s) => (s.weight ? `${s.reps}×${s.weight}` : s.reps))
     .join(" · ");
 }
 
@@ -283,6 +298,49 @@ export function weeklyCardio(cardio, nWeeks = 12, today = todayStr()) {
   }
   weeks.forEach((week) => week.days.sort((a, b) => a.date.localeCompare(b.date)));
   return weeks;
+}
+
+// Cardio minutes per day for the last nDays (including today), oldest first.
+export function dailyCardio(cardio, nDays = 14, today = todayStr()) {
+  const days = [];
+  const byDate = new Map();
+  for (let i = Math.max(0, Math.floor(nDays)) - 1; i >= 0; i--) {
+    const date = addDaysStr(today, -i);
+    const day = { date, label: fmtDateShortMonth(date), minutes: 0 };
+    days.push(day);
+    byDate.set(date, day);
+  }
+  for (const entry of cardio || []) {
+    const day = byDate.get(entry.date);
+    if (!day) continue;
+    day.minutes += Math.max(0, Math.floor(Number(entry.minutes)) || 0);
+  }
+  return days;
+}
+
+// Cardio minutes per calendar month for the last nMonths (including the
+// current month), oldest first. Month keys use local date parts.
+export function monthlyCardio(cardio, nMonths = 6, today = todayStr()) {
+  const current = dateFromStr(today);
+  const months = [];
+  const byKey = new Map();
+  for (let i = Math.max(0, Math.floor(nMonths)) - 1; i >= 0; i--) {
+    const date = new Date(current.getFullYear(), current.getMonth() - i, 1);
+    const monthKey = `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
+    const month = {
+      monthKey,
+      label: `${MONTHS[date.getMonth()]}/${String(date.getFullYear()).slice(-2)}`,
+      minutes: 0,
+    };
+    months.push(month);
+    byKey.set(monthKey, month);
+  }
+  for (const entry of cardio || []) {
+    const month = byKey.get(String(entry.date || "").slice(0, 7));
+    if (!month) continue;
+    month.minutes += Math.max(0, Math.floor(Number(entry.minutes)) || 0);
+  }
+  return months;
 }
 
 // ---------- sorting ----------

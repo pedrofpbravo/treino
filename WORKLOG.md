@@ -191,3 +191,30 @@ Deploy once at the end: bump CACHE (sw.js) + APP_VERSION (main.js).
   path auto-denies commands; workaround: codex exec) + 1 test-env issue (SW
   staleness). Open items: real-device (iPhone) pass on drag and the timer
   ding; deploy ritual on the phone (force-close + reopen the PWA).
+
+## 2026-09-04 — v6.2 batch (5 improvements)
+
+### Request (Pedro)
+1. Cardio chart granularity: Dia / Semana / Mês selector.
+2. Day chip ✓ only when the whole day is done; distinct color while in progress.
+3. Drag-to-reorder only in an explicit edit mode.
+4. Invert set display: reps first, then weight ("12×40kg").
+5. Searchable dropdowns (combobox) for primary/secondary muscles in the exercise sheet.
+
+### Scope locked (Pedro's answers, 2026-09-04)
+- (2) Only a COMPLETE day counts, for both the ✓ and the cycle reset. Partial day = "doing" color only.
+- (3) "Ordenar" toggle button on the Treino tab next to "Editar dia"; drag immediate while on; tap/check suppressed.
+- (4) reps×weight everywhere (Último, Histórico, Progresso, finish summary) AND reps input before kg in the sets editor. Weight keeps bold emphasis. Target pill "3×12" untouched.
+- (5) Primary = single-select combobox; secondary and others = multi with removable tags; accent-insensitive filtering via normalize().
+- (1) Defaults accepted: chips Dia/Semana/Mês above the cardio chart, default Semana; Dia = 14 days, Semana = 12 weeks (range labels, ends only), Mês = 6 months ("set/26"). Weeks list below unchanged.
+
+### Delegations
+- Brief A (items 1+2) → codex exec --sandbox workspace-write, background. Brief at scratchpad/brief-a.md.
+- Brief B (items 3+4+5) → dispatched after A lands (both edit main.js). Brief at scratchpad/brief-b.md.
+
+### Results (2026-09-04)
+- Brief A delivered: dailyCardio/monthlyCardio helpers, Dia/Semana/Mês chips, cycleDays rewritten to complete-sessions-only, .chip.doing style, fakedb complete-session seed. Reviewed and approved; deviation accepted (new fmtDateShortMonth instead of changing fmtDate).
+- Brief B delivered: reorderMode + "Ordenar" button (immediate drag, tap/check suppressed), reps-first set format (setsLabel, appendStyledSets, sets editor input order), three searchable muscle comboboxes with tags replacing the select + chip grids.
+- Fable review fix: primary combobox input now snaps back to the picked muscle name on blur (typed leftover text no longer desyncs from the stored pick).
+- Consolidated browser verification on #debug: all five acceptance sets passed. Cardio chart 14/12/6 bars with correct labels and titles, weeks list untouched; day chip doing -> ✓ -> doing verified (early false alarm was the test script clicking detached DOM nodes, not an app bug); drag inert with Ordenar off, immediate with it on; "Último" and history render 12×40kg with weight bold; sets editor reps-before-kg; comboboxes filter accent-insensitively, tags add/remove, exclusivity kept. Zero console errors.
+- Pending: deploy ritual (bump sw.js CACHE + main.js APP_VERSION, commit) awaiting Pedro's go.

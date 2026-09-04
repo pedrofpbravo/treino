@@ -113,6 +113,38 @@ function baseWeight(exerciseId) {
   }
 })();
 
+// Keep one deterministic complete past session for every program so the
+// completed-day chips remain visible even though the main history has skips.
+(function ensureCompleteSessions() {
+  const today = todayStr();
+  store.programs.forEach((prog, pi) => {
+    const day = store.days.find((item) => item.programId === prog.id && item.entries.length > 0);
+    if (!day) return;
+    const date = addDaysStr(today, -(1 + pi));
+    day.entries.forEach((entry, i) => {
+      const ex = store.exercises.find((item) => item.id === entry.exerciseId);
+      const log = {
+        date,
+        programId: prog.id,
+        dayId: day.id,
+        exerciseId: entry.exerciseId,
+        exerciseName: ex.name,
+        dayName: day.name,
+        programName: prog.name,
+        sets: Array.from({ length: entry.targetSets }, () => ({
+          reps: entryReps(entry),
+          weight: baseWeight(entry.exerciseId),
+          done: true,
+        })),
+      };
+      const saved = { id: logDocId(log), ...log, ts: ts(new Date(date + "T08:00").getTime() + i * 60000) };
+      const existing = store.logs.findIndex((item) => item.id === saved.id);
+      if (existing >= 0) store.logs[existing] = saved;
+      else store.logs.push(saved);
+    });
+  });
+})();
+
 (function generateCardio() {
   const today = todayStr();
   const types = store.cardioTypes.filter((type) => type.id !== "ct-outro");

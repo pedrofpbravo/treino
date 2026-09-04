@@ -68,7 +68,10 @@
 
         <div class="day-actions">
           <span id="day-progress" class="hint"></span>
-          <button id="btn-edit-day" class="btn ghost small" type="button">✎ Editar dia</button>
+          <div class="day-action-buttons">
+            <button id="btn-reorder" class="btn ghost small" type="button" aria-pressed="false">Ordenar</button>
+            <button id="btn-edit-day" class="btn ghost small" type="button">✎ Editar dia</button>
+          </div>
         </div>
 
         <div id="timer-presets" class="timer-presets">
@@ -251,17 +254,29 @@
         <span>Nome *</span>
         <input id="ex-name" required maxlength="80" autocomplete="off" placeholder="ex.: Supino máquina">
       </label>
-      <label class="field">
-        <span>Músculo principal *</span>
-        <select id="ex-primary" required></select>
-      </label>
       <div class="field">
-        <span>Secundários</span>
-        <div id="ex-secondary" class="muscle-grid"></div>
+        <label for="ex-primary">Músculo principal *</label>
+        <div class="muscle-combobox">
+          <input id="ex-primary" autocomplete="off" aria-autocomplete="list" aria-controls="ex-primary-list" aria-expanded="false">
+          <div id="ex-primary-list" class="muscle-options" role="listbox" hidden></div>
+          <div id="ex-primary-tags" class="muscle-tags"></div>
+        </div>
       </div>
       <div class="field">
-        <span>Outros</span>
-        <div id="ex-others" class="muscle-grid"></div>
+        <label for="ex-secondary">Secundários</label>
+        <div class="muscle-combobox">
+          <input id="ex-secondary" autocomplete="off" aria-autocomplete="list" aria-controls="ex-secondary-list" aria-expanded="false">
+          <div id="ex-secondary-list" class="muscle-options" role="listbox" hidden></div>
+          <div id="ex-secondary-tags" class="muscle-tags"></div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="ex-others">Outros</label>
+        <div class="muscle-combobox">
+          <input id="ex-others" autocomplete="off" aria-autocomplete="list" aria-controls="ex-others-list" aria-expanded="false">
+          <div id="ex-others-list" class="muscle-options" role="listbox" hidden></div>
+          <div id="ex-others-tags" class="muscle-tags"></div>
+        </div>
       </div>
       <label class="field">
         <span>Peso de referência</span>

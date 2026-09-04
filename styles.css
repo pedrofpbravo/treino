@@ -75,7 +75,7 @@ input, select { font: inherit; }
 }
 
 .field { display: block; margin: 0 0 14px; }
-.field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+.field > span, .field > label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
 .field input, .field select, .field textarea {
   width: 100%;
   padding: 12px 14px;
@@ -120,6 +120,7 @@ input, select { font: inherit; }
 .btn.ghost { background: transparent; }
 .btn.danger { color: var(--danger); }
 .btn.small { padding: 8px 14px; font-size: 14px; width: auto; }
+.btn.on { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
 #login-form .btn.primary { margin-top: 6px; }
 
 .notice {
@@ -174,6 +175,9 @@ input, select { font: inherit; }
   flex: none;
 }
 .chip.on { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+.chip.doing { background: #fbe5dc; color: #1e1e1c; border-color: #f0916a; }
+.chip.on.doing { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+.cardio-chart-controls { margin: 8px 0 4px; }
 
 /* ---------- treino ---------- */
 .program-row { display: flex; gap: 8px; margin-bottom: 10px; }
@@ -195,6 +199,7 @@ input, select { font: inherit; }
   gap: 8px;
   margin: 2px 2px 10px;
 }
+.day-action-buttons { display: flex; align-items: center; gap: 8px; }
 
 .workout-list { display: flex; flex-direction: column; gap: 10px; }
 
@@ -217,6 +222,22 @@ input, select { font: inherit; }
   flex: none;
   border: 2px dashed var(--accent-soft);
   border-radius: var(--radius);
+}
+.workout-list.reordering .workout-card {
+  position: relative;
+  padding-right: 38px;
+  outline: 1px dashed var(--accent);
+  cursor: grab;
+}
+.workout-list.reordering .workout-card::after {
+  content: "≡";
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--accent-ink);
+  font-size: 20px;
+  font-weight: 800;
 }
 
 .wc-top { display: flex; align-items: center; gap: 12px; }
@@ -621,9 +642,58 @@ input, select { font: inherit; }
 .picker-result:last-child { border-bottom: none; }
 .picker-result .sub { margin-left: auto; font-size: 12px; color: var(--muted); }
 
-/* muscle chip grid in exercise sheet */
-.muscle-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.muscle-grid .chip { padding: 7px 13px; font-size: 13px; }
+/* searchable muscle fields in exercise sheet */
+.muscle-combobox { position: relative; }
+.field .muscle-combobox > input { font-size: 16px; }
+.muscle-options {
+  position: absolute;
+  z-index: 8;
+  top: 49px;
+  left: 0;
+  right: 0;
+  max-height: 210px;
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(40, 30, 20, 0.14);
+  -webkit-overflow-scrolling: touch;
+}
+.muscle-option {
+  display: block;
+  width: 100%;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  text-align: left;
+  font-size: 15px;
+}
+.muscle-option:last-child { border-bottom: none; }
+.muscle-option.empty { color: var(--muted); }
+.muscle-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.muscle-tags:empty { display: none; }
+.muscle-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+.muscle-tag button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+}
 
 /* ---------- rest timer ---------- */
 /* inline preset chips on the Treino tab */

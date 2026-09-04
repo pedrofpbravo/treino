@@ -13,7 +13,9 @@ import {
   normalize,
   todayStr,
   fmtDate,
+  fmtDateShortMonth,
   fmtDateFull,
+  addDaysStr,
   logDocId,
   lastLogFor,
   prefillSets,
@@ -29,6 +31,8 @@ import {
   exercisesFromLogs,
   weeklyFrequency,
   weeklyCardio,
+  dailyCardio,
+  monthlyCardio,
   sortByOrder,
   sortExercises,
 } from "./logic.js";
@@ -36,7 +40,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v6.1";
+const APP_VERSION = "v6.2";
 
 const $ = (id) => document.getElementById(id);
 
@@ -58,11 +62,14 @@ const state = {
   search: "",
   muscleFilters: new Set(),
   histView: "sessoes",
+  cardioChartView: "week",
   progExerciseId: null,
   editingExerciseId: null,
   editingDayId: null,
   detailExerciseId: null,
+  reorderMode: false,
   draftEntries: [], // day sheet: [{exerciseId, targetSets, repMin, repMax}]
+  draftPrimaryMuscleId: null,
   draftSecondary: new Set(), // exercise sheet muscle picks
   draftOthers: new Set(),
   seededMuscles: false,
@@ -128,16 +135,17 @@ function lastLine(exerciseId, refWeight, beforeDate = "9999-99-99") {
 function appendStyledSets(container, sets) {
   setsParts(sets).forEach((set, idx) => {
     if (idx > 0) container.appendChild(document.createTextNode(" · "));
+    const reps = document.createElement("span");
+    reps.className = "wc-last-reps";
+    reps.textContent = set.reps;
+    container.appendChild(reps);
     if (set.weight) {
+      container.appendChild(document.createTextNode("×"));
       const weight = document.createElement("span");
       weight.className = "wc-last-weight";
       weight.textContent = set.weight;
       container.appendChild(weight);
     }
-    const reps = document.createElement("span");
-    reps.className = "wc-last-reps";
-    reps.textContent = set.weight ? `×${set.reps}` : set.reps;
-    container.appendChild(reps);
   });
 }
 
@@ -149,6 +157,8 @@ function numericRefWeight(id) {
 // ---------- treino ----------
 
 function selectDefaults() {
+  const previousProgramId = state.programId;
+  const previousDayId = state.dayId;
   // Heal stale localStorage selections (deleted program/day).
   if (!currentProgram()) {
     state.programId = state.programs[0]?.id || null;
@@ -158,6 +168,9 @@ function selectDefaults() {
   if (!days.some((d) => d.id === state.dayId)) {
     state.dayId = days[0]?.id || null;
     localStorage.setItem("gym:day", state.dayId || "");
+  }
+  if (state.programId !== previousProgramId || state.dayId !== previousDayId) {
+    state.reorderMode = false;
   }
 }
 
@@ -177,13 +190,18 @@ function renderTreino() {
   const chipsEl = $("day-chips");
   chipsEl.innerHTML = "";
   const days = state.programId ? daysOf(state.programId) : [];
-  const trainedDays = cycleDays(state.logs, state.programId, days.map((day) => day.id));
+  const trainedDays = cycleDays(state.logs, state.programId, days);
+  const today = todayStr();
   days.forEach((day) => {
     const chip = document.createElement("button");
     chip.type = "button";
-    chip.className = "chip" + (day.id === state.dayId ? " on" : "");
+    const inProgress = !trainedDays.has(day.id) && state.logs.some((log) =>
+      log.date === today && log.programId === state.programId && log.dayId === day.id
+    );
+    chip.className = "chip" + (day.id === state.dayId ? " on" : "") + (inProgress ? " doing" : "");
     chip.textContent = trainedDays.has(day.id) ? `✓ ${day.name}` : day.name;
     chip.addEventListener("click", () => {
+      state.reorderMode = false;
       state.dayId = day.id;
       localStorage.setItem("gym:day", day.id);
       renderTreino();
@@ -199,6 +217,12 @@ function renderTreino() {
   chipsEl.appendChild(addChip);
 
   $("btn-edit-day").hidden = !state.dayId;
+  const reorderBtn = $("btn-reorder");
+  const canReorder = !!state.dayId && (currentDay()?.entries || []).length >= 2;
+  if (!canReorder) state.reorderMode = false;
+  reorderBtn.hidden = !canReorder;
+  reorderBtn.classList.toggle("on", state.reorderMode);
+  reorderBtn.setAttribute("aria-pressed", String(state.reorderMode));
   renderWorkout();
   renderTodayCardio();
 }
@@ -286,6 +310,7 @@ function submitCardio(e) {
 function renderWorkout() {
   const listEl = $("workout-list");
   listEl.innerHTML = "";
+  listEl.classList.toggle("reordering", state.reorderMode);
   const day = currentDay();
 
   $("workout-noday").hidden = !!day || state.programs.length === 0;
@@ -315,7 +340,7 @@ function renderWorkout() {
   makeDraggableList(listEl);
 }
 
-// Long-press reorder for workout cards. A placeholder stays in the flex list
+// Edit-mode reorder for workout cards. A placeholder stays in the flex list
 // while the lifted card follows the pointer, so mouse and touch share the same
 // compact implementation. renderWorkout() calls this on every render, so the
 // listeners are wired to the persistent #workout-list only once; the day is
@@ -323,20 +348,17 @@ function renderWorkout() {
 function makeDraggableList(list) {
   if (list.dataset.dragWired) return;
   list.dataset.dragWired = "1";
-  const HOLD_MS = 350;
-  const MOVE_TOLERANCE = 8;
   let pending = null;
   let drag = null;
 
   const clearPending = () => {
     if (!pending) return;
-    clearTimeout(pending.timer);
     pending = null;
   };
 
   const lift = () => {
     if (!pending || !pending.card.isConnected) return;
-    const { card, pointerId, x, y } = pending;
+    const { card, pointerId, y } = pending;
     const rect = card.getBoundingClientRect();
     const placeholder = document.createElement("div");
     placeholder.className = "workout-placeholder";
@@ -352,7 +374,7 @@ function makeDraggableList(list) {
     });
     drag = { card, placeholder, pointerId, offsetY: y - rect.top };
     pending = null;
-    // Throws if the pointer died right at the hold boundary; finish() still
+    // Pointer capture can throw if the pointer ended during setup; finish() still
     // cleans up via the drag object, so the card can never stay stuck.
     try { card.setPointerCapture?.(pointerId); } catch { /* keep dragging uncaptured */ }
   };
@@ -388,6 +410,7 @@ function makeDraggableList(list) {
   };
 
   list.addEventListener("pointerdown", (e) => {
+    if (!state.reorderMode) return;
     if (e.button !== undefined && e.button !== 0) return;
     if (e.target.closest("button, input, select, textarea, a, .sets-editor")) return;
     const card = e.target.closest(".workout-card");
@@ -396,17 +419,12 @@ function makeDraggableList(list) {
     pending = {
       card,
       pointerId: e.pointerId,
-      x: e.clientX,
       y: e.clientY,
-      timer: setTimeout(lift, HOLD_MS),
     };
+    lift();
   });
 
   list.addEventListener("pointermove", (e) => {
-    if (pending && e.pointerId === pending.pointerId) {
-      if (Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > MOVE_TOLERANCE) clearPending();
-      return;
-    }
     if (!drag || e.pointerId !== drag.pointerId) return;
     e.preventDefault();
     drag.card.style.top = `${e.clientY - drag.offsetY}px`;
@@ -447,6 +465,7 @@ function buildWorkoutCard(entry, day, logId) {
   check.setAttribute("aria-label", log ? "Desmarcar" : "Marcar como feito");
   check.addEventListener("click", (e) => {
     e.stopPropagation();
+    if (state.reorderMode) return;
     if (log) {
       db.deleteLog(logId).catch(() => toast("Erro ao remover."));
       toast("Registro removido.");
@@ -513,6 +532,7 @@ function buildWorkoutCard(entry, day, logId) {
 
   if (ex) {
     card.addEventListener("click", (e) => {
+      if (state.reorderMode) return;
       if (card.dataset.suppressClick) return;
       if (e.target.closest(".wc-check") || e.target.closest(".sets-editor")) return;
       openDetailSheet(entry.exerciseId);
@@ -680,7 +700,7 @@ function buildSetsEditor(entry, day, log) {
       save();
     });
 
-    row.append(done, n, wLab, repsLab, rm);
+    row.append(done, n, repsLab, wLab, rm);
     wrap.appendChild(row);
   });
 
@@ -987,30 +1007,108 @@ function renderExercises() {
 
 // ---------- exercise sheet (new / edit) ----------
 
-function renderMuscleGrid(container, picked, excluded) {
-  container.innerHTML = "";
-  state.muscles.forEach((m) => {
-    if (excluded.has(m.id)) return;
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "chip" + (picked.has(m.id) ? " on" : "");
-    chip.textContent = m.name;
-    chip.addEventListener("click", () => {
-      if (picked.has(m.id)) picked.delete(m.id);
-      else picked.add(m.id);
-      renderExerciseSheetGrids();
+const exerciseMuscleComboboxes = {};
+
+function muscleCombobox({ inputEl, listEl, tagsEl, multi, getPicked, getExcluded, onPick }) {
+  const hideOptions = () => {
+    listEl.hidden = true;
+    inputEl.setAttribute("aria-expanded", "false");
+  };
+
+  const choose = (muscle) => {
+    inputEl.value = multi ? "" : muscle.name;
+    onPick(muscle.id, true);
+    if (multi) {
+      inputEl.focus();
+      renderOptions();
+    } else {
+      hideOptions();
+    }
+  };
+
+  const renderOptions = () => {
+    const query = normalize(inputEl.value);
+    const excluded = getExcluded ? getExcluded() : new Set();
+    const picked = multi ? getPicked() : new Set();
+    const matches = state.muscles.filter((muscle) =>
+      !excluded.has(muscle.id) && !picked.has(muscle.id) && normalize(muscle.name).includes(query)
+    );
+    listEl.innerHTML = "";
+    matches.forEach((muscle) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "muscle-option";
+      option.setAttribute("role", "option");
+      option.dataset.muscleId = muscle.id;
+      option.textContent = muscle.name;
+      // Preventing focus loss lets the choice land before iOS hides the list.
+      option.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        choose(muscle);
+      });
+      listEl.appendChild(option);
     });
-    container.appendChild(chip);
+    if (matches.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "muscle-option empty";
+      empty.textContent = "Nenhum músculo encontrado";
+      listEl.appendChild(empty);
+    }
+    listEl.hidden = false;
+    inputEl.setAttribute("aria-expanded", "true");
+  };
+
+  const renderTags = () => {
+    tagsEl.innerHTML = "";
+    if (!multi) return;
+    getPicked().forEach((id) => {
+      const muscle = state.muscles.find((item) => item.id === id);
+      if (!muscle) return;
+      const tag = document.createElement("span");
+      tag.className = "muscle-tag";
+      tag.appendChild(document.createTextNode(muscle.name));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Remover ${muscle.name}`);
+      remove.addEventListener("click", () => onPick(id, false));
+      tag.appendChild(remove);
+      tagsEl.appendChild(tag);
+    });
+  };
+
+  inputEl.addEventListener("focus", renderOptions);
+  inputEl.addEventListener("input", renderOptions);
+  inputEl.addEventListener("blur", () => {
+    hideOptions();
+    // Single mode: leftover typed text is not a pick; snap back to the pick.
+    if (!multi) inputEl.value = muscleName(getPicked());
   });
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideOptions();
+    if (e.key !== "Enter") return;
+    const firstId = listEl.querySelector(".muscle-option[role=option]")?.dataset.muscleId;
+    const muscle = state.muscles.find((item) => item.id === firstId);
+    if (!muscle) return;
+    e.preventDefault();
+    choose(muscle);
+  });
+
+  return {
+    render() {
+      renderTags();
+      if (document.activeElement === inputEl) renderOptions();
+      else hideOptions();
+    },
+  };
 }
 
 function renderExerciseSheetGrids() {
-  const primary = $("ex-primary").value;
+  const primary = state.draftPrimaryMuscleId;
   state.draftSecondary.delete(primary);
   state.draftOthers.delete(primary);
   [...state.draftSecondary].forEach((id) => state.draftOthers.delete(id));
-  renderMuscleGrid($("ex-secondary"), state.draftSecondary, new Set([primary]));
-  renderMuscleGrid($("ex-others"), state.draftOthers, new Set([primary, ...state.draftSecondary]));
+  Object.values(exerciseMuscleComboboxes).forEach((combobox) => combobox.render());
 }
 
 function openExerciseSheet(exerciseId) {
@@ -1020,16 +1118,10 @@ function openExerciseSheet(exerciseId) {
   $("sheet-exercise-title").textContent = ex ? "Editar exercício" : "Novo exercício";
   $("ex-name").value = ex ? ex.name : "";
 
-  const primarySelect = $("ex-primary");
-  primarySelect.innerHTML = "";
-  state.muscles.forEach((m) => {
-    const opt = document.createElement("option");
-    opt.value = m.id;
-    opt.textContent = m.name;
-    if (ex && m.id === ex.primaryMuscleId) opt.selected = true;
-    primarySelect.appendChild(opt);
-  });
-
+  state.draftPrimaryMuscleId = ex?.primaryMuscleId || null;
+  $("ex-primary").value = muscleName(state.draftPrimaryMuscleId);
+  $("ex-secondary").value = "";
+  $("ex-others").value = "";
   state.draftSecondary = new Set(ex?.secondaryMuscleIds || []);
   state.draftOthers = new Set(ex?.otherMuscleIds || []);
   renderExerciseSheetGrids();
@@ -1045,7 +1137,7 @@ function openExerciseSheet(exerciseId) {
 function submitExerciseForm(e) {
   e.preventDefault();
   const name = $("ex-name").value.trim();
-  const primaryMuscleId = $("ex-primary").value;
+  const primaryMuscleId = state.draftPrimaryMuscleId;
   const errEl = $("ex-error");
   if (!name || !primaryMuscleId) {
     errEl.textContent = "Preencha o nome e o músculo principal.";
@@ -1242,10 +1334,50 @@ function renderSessions() {
 
 function renderCardio() {
   const weeks = weeklyCardio(state.cardio, 12, todayStr());
-  $("cardio-chart").innerHTML = barChart(
-    weeks.map((week) => ({ label: fmtDate(week.weekStart), value: week.totalMinutes })),
-    { showLabels: "ends", color: "var(--accent)" }
-  );
+  const chartEl = $("cardio-chart");
+  let controls = $("cardio-chart-controls");
+  if (!controls) {
+    controls = document.createElement("div");
+    controls.id = "cardio-chart-controls";
+    controls.className = "chips cardio-chart-controls";
+    chartEl.before(controls);
+  }
+  controls.innerHTML = "";
+  [["day", "Dia"], ["week", "Semana"], ["month", "Mês"]].forEach(([view, label]) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip" + (state.cardioChartView === view ? " on" : "");
+    chip.textContent = label;
+    chip.addEventListener("click", () => {
+      state.cardioChartView = view;
+      renderCardio();
+    });
+    controls.appendChild(chip);
+  });
+
+  let bars;
+  let showLabels;
+  let title;
+  if (state.cardioChartView === "day") {
+    bars = dailyCardio(state.cardio, 14, todayStr())
+      .map((day) => ({ label: day.label, value: day.minutes }));
+    showLabels = "ends";
+    title = "Cardio por dia";
+  } else if (state.cardioChartView === "month") {
+    bars = monthlyCardio(state.cardio, 6, todayStr())
+      .map((month) => ({ label: month.label, value: month.minutes }));
+    showLabels = "all";
+    title = "Cardio por mês";
+  } else {
+    bars = weeks.map((week) => ({
+      label: `${week.weekStart.slice(8)}-${fmtDateShortMonth(addDaysStr(week.weekStart, 6))}`,
+      value: week.totalMinutes,
+    }));
+    showLabels = "ends";
+    title = "Cardio por semana";
+  }
+  chartEl.closest(".chart-card").querySelector(".chart-title").textContent = title;
+  chartEl.innerHTML = barChart(bars, { showLabels, color: "var(--accent)" });
 
   const list = $("cardio-history-list");
   list.innerHTML = "";
@@ -1876,6 +2008,10 @@ function onCardio(cardio) {
 // ---------- tabs ----------
 
 function switchTab(tab) {
+  if (tab !== "treino" && state.reorderMode) {
+    state.reorderMode = false;
+    renderTreino();
+  }
   state.tab = tab;
   document.querySelectorAll(".tab").forEach((s) => (s.hidden = s.id !== `tab-${tab}`));
   document.querySelectorAll(".tabbtn").forEach((b) =>
@@ -1958,6 +2094,7 @@ function wire() {
 
   // treino
   $("program-select").addEventListener("change", (e) => {
+    state.reorderMode = false;
     state.programId = e.target.value;
     localStorage.setItem("gym:program", state.programId);
     state.dayId = null; // re-picked in selectDefaults
@@ -1969,6 +2106,10 @@ function wire() {
   });
   $("btn-edit-day").addEventListener("click", () => {
     if (state.dayId) openDaySheet(state.dayId);
+  });
+  $("btn-reorder").addEventListener("click", () => {
+    state.reorderMode = !state.reorderMode;
+    renderTreino();
   });
   $("btn-finish-workout").addEventListener("click", openFinishSheet);
   $("btn-finish-confirm").addEventListener("click", confirmFinishWorkout);
@@ -2013,7 +2154,43 @@ function wire() {
   });
   $("fab-new-exercise").addEventListener("click", () => openExerciseSheet(null));
   $("exercise-form").addEventListener("submit", submitExerciseForm);
-  $("ex-primary").addEventListener("change", renderExerciseSheetGrids);
+  exerciseMuscleComboboxes.primary = muscleCombobox({
+    inputEl: $("ex-primary"),
+    listEl: $("ex-primary-list"),
+    tagsEl: $("ex-primary-tags"),
+    multi: false,
+    getPicked: () => state.draftPrimaryMuscleId,
+    onPick: (id) => {
+      state.draftPrimaryMuscleId = id;
+      renderExerciseSheetGrids();
+    },
+  });
+  exerciseMuscleComboboxes.secondary = muscleCombobox({
+    inputEl: $("ex-secondary"),
+    listEl: $("ex-secondary-list"),
+    tagsEl: $("ex-secondary-tags"),
+    multi: true,
+    getPicked: () => state.draftSecondary,
+    getExcluded: () => new Set([state.draftPrimaryMuscleId]),
+    onPick: (id, picked) => {
+      if (picked) state.draftSecondary.add(id);
+      else state.draftSecondary.delete(id);
+      renderExerciseSheetGrids();
+    },
+  });
+  exerciseMuscleComboboxes.others = muscleCombobox({
+    inputEl: $("ex-others"),
+    listEl: $("ex-others-list"),
+    tagsEl: $("ex-others-tags"),
+    multi: true,
+    getPicked: () => state.draftOthers,
+    getExcluded: () => new Set([state.draftPrimaryMuscleId, ...state.draftSecondary]),
+    onPick: (id, picked) => {
+      if (picked) state.draftOthers.add(id);
+      else state.draftOthers.delete(id);
+      renderExerciseSheetGrids();
+    },
+  });
   $("btn-exercise-delete").addEventListener("click", deleteCurrentExercise);
 
   // histórico
