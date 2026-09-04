@@ -284,9 +284,9 @@ input, select { font: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.wc-last b { color: var(--ink); }
-.wc-last-weight { color: var(--ink); font-weight: 800; }
-.wc-last-reps { color: var(--muted); font-size: 11px; }
+.wc-last b { color: var(--ink); font-weight: 600; }
+.wc-last-weight { color: var(--ink); font-weight: 600; }
+.wc-last-reps { color: var(--muted); }
 .wc-note {
   display: block;
   font-size: 12px;

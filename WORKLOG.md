@@ -2,6 +2,55 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
+## 2026-09-04 — v6.3: cleaner set-summary lines
+
+### Request (Pedro)
+The bold weight in the "Último" line looks ugly (font-weight 800 repeated per
+set, reps shrunk to 11px).
+
+### Scope locked (Pedro's answers, 2026-09-04)
+- Group the weight when all sets share it: "12kg · 12/9/8/8"; per-set fallback
+  when weights differ. Soften bold 800 -> 600; no font-size difference between
+  reps and weight. Apply app-wide (setsLabel propagates to Histórico, day
+  summary, Progresso). No broader UI audit for now.
+
+### Delegation
+- Brief "sets-restyle" sent to Codex (background, codex exec
+  --sandbox workspace-write): new groupedSetsParts in logic.js, setsLabel
+  rewrite, appendStyledSets grouped rendering in main.js, styles.css softening,
+  version bump v6.2 -> v6.3 (APP_VERSION + sw CACHE).
+- Review findings: diff minimal and to spec (4 files, ~35 lines). Node sanity
+  checks pass (uniform, mixed fallback, weightless, decimal comma, single set,
+  empty). Browser #debug pass: cards render "35kg · 11/11", one weight span per
+  card, weight 600/13px, reps 400/13px, version v6.3; catalog/history rows pick
+  the format up via setsLabel. No fixes needed. Side change: dev port moved
+  8087 -> 8093 in .claude/launch.json (8087 newly unbindable, 8090 taken by
+  Intest's server). Not yet committed/deployed.
+
+### Pedro feedback round (2026-09-04, pre-deploy)
+- (1) "History changed" — false alarm: he saw localhost #debug FAKE data
+  (fakedb logs generated off seed refWeight "20 kg" for Tríceps pushdown).
+  Real Firestore data untouched, nothing deployed. Explained.
+- (2) Notes showing "-5"-style negative weights: leftover of the v6 refWeight
+  migration ("5–6 kg" -> refWeight 5, note line "–6 kg"). Fix: one-time boot
+  migration gym:fix-note-dash-v6-3 stripping a leading dash before a digit per
+  note line (ranges like "pós. 6–7" untouched). Delegated to Codex.
+- (3) Grouped "12kg · 11/11" format scrapped ("11/11" reads like a date).
+  Reverted by Fable in review: setsLabel/appendStyledSets back to per-set
+  "12×12kg · ...". KEPT: font softening (weight 600, no 11px reps shrink).
+  groupedSetsParts removed. Node checks confirm exact pre-v6.3 strings.
+
+### Verification round 2 (post-fixes)
+- Codex delivered fixNoteDashes to spec (main.js only: flag
+  gym:fix-note-dash-v6-3, per-line /^\s*[-–—]\s*(?=\d)/ strip, same field set
+  as migrateRefWeights, called after it in onExercises). logic.js back to HEAD.
+- Node: 6 regex cases pass (range "6–7" kept, "-5"/"–42,5 kg" stripped,
+  text-dash kept, idempotent). node --check main.js ok.
+- Browser #debug: per-set "11×35kg · 11×35kg" restored, weight 600/13px,
+  reps 400/13px, v6.3, migration flag sets, zero console errors.
+- Final v6.3 contents: font softening (styles.css), note-dash migration
+  (main.js), version/CACHE bump. Awaiting Pedro's OK to commit + deploy.
+
 ## 2026-09-03 — Session start
 
 ### Setup

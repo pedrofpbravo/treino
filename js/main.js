@@ -40,7 +40,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v6.2";
+const APP_VERSION = "v6.3";
 
 const $ = (id) => document.getElementById(id);
 
@@ -1821,9 +1821,11 @@ function updateTimerVisibility() {
 // ---------- snapshot handlers ----------
 
 const REFWEIGHT_MIGRATION_KEY = "gym:migrate-refweight-v6";
+const NOTE_DASH_FIX_KEY = "gym:fix-note-dash-v6-3";
 const SMITH_SEED_KEY = "gym:seed-smith-v6";
 const CARDIO_BIKES_KEY = "gym:cardio-bikes-v6-1";
 let refWeightMigrationStarted = false;
+let noteDashFixStarted = false;
 let smithSeedStarted = false;
 let cardioBikesStarted = false;
 
@@ -1862,6 +1864,37 @@ async function migrateRefWeights(exercises) {
     localStorage.setItem(REFWEIGHT_MIGRATION_KEY, "1");
   } catch {
     toast("Erro ao atualizar pesos de referência.");
+  }
+}
+
+async function fixNoteDashes(exercises) {
+  if (noteDashFixStarted || localStorage.getItem(NOTE_DASH_FIX_KEY)) return;
+  noteDashFixStarted = true;
+  const writes = [];
+
+  exercises.forEach((ex) => {
+    const oldNote = String(ex.note || "");
+    const note = oldNote
+      .split("\n")
+      .map((line) => line.replace(/^\s*[-–—]\s*(?=\d)/, ""))
+      .join("\n");
+    if (note === oldNote) return;
+
+    writes.push(db.updateExercise(ex.id, {
+      name: ex.name,
+      primaryMuscleId: ex.primaryMuscleId,
+      secondaryMuscleIds: ex.secondaryMuscleIds || [],
+      otherMuscleIds: ex.otherMuscleIds || [],
+      refWeight: ex.refWeight,
+      note,
+    }));
+  });
+
+  try {
+    await Promise.all(writes);
+    localStorage.setItem(NOTE_DASH_FIX_KEY, "1");
+  } catch {
+    toast("Erro ao corrigir notas.");
   }
 }
 
@@ -1957,6 +1990,7 @@ function onExercises(exercises) {
   state.exercises = exercises;
   state.exercisesById = new Map(exercises.map((e) => [e.id, e]));
   migrateRefWeights(exercises);
+  fixNoteDashes(exercises);
   seedSmithExercise(exercises);
   renderExercises();
   renderTreino();
