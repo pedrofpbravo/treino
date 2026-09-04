@@ -2,6 +2,46 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
+## 2026-09-04 — v6.4: histórico completo por exercício
+
+### Request (Pedro)
+Abrir um exercício e clicar num campo de histórico que abre uma janela estilo
+log com todas as sessões daquele exercício: datas, séries e o peso de cada
+série, para acompanhar a evolução.
+
+### Scope locked (Pedro's answers, 2026-09-04, uma rodada)
+- Entrada nos DOIS lugares: sheet rápido do card (aba Treino) e sheet de
+  edição do exercício (aba Exercícios).
+- Uma linha por série ("Série 1 · 11×35kg"), sem resumo de máximo/volume.
+- Sem gráfico na janela (o gráfico segue só em Histórico > Progresso).
+- Todas as sessões, rolagem, sem paginação.
+
+### Execução
+Feita direto pelo Opus, sem delegação ao Codex (pedido explícito do Pedro:
+"instead of fable we will use opus on this one").
+
+- `js/logic.js`: `exerciseHistory(logs, exerciseId)` — sessões do exercício,
+  mais recente primeiro, séries já formatadas (weight/reps/done). Reusa
+  `cloneSets`, então log antigo sem `done` continua contando como feito.
+- `index.html`: link-row "Histórico" em `sheet-detail` e `sheet-exercise`
+  (escondido em "Novo exercício"); novo `sheet-exlog`.
+- `styles.css`: `.link-row`, `.sheet.sheet-stack` (z-index 55 sobre os 50
+  normais), `.exlog-*`.
+- `js/main.js`: `openExerciseLog` / `renderExerciseLog` / `closeExerciseLog`,
+  `historySummary`, re-render ao vivo em `onLogs`, `closeSheets` limpa
+  `state.exlogExerciseId`. APP_VERSION v6.4 + sw CACHE treino-v6.4.
+
+### Verificação (uma passada consolidada, browser #debug, SW desregistrado)
+- Abre pelos dois caminhos; 14 sessões renderizadas = 14 logs em memória.
+- Empilhamento: sheet de log z-index 55 sobre o de baixo (50), que continua
+  aberto; "Fechar" esconde só o de cima e o rascunho digitado no formulário
+  de exercício sobrevive ao ida-e-volta.
+- "Novo exercício" não mostra o link; exercício sem logs mostra o estado
+  vazio ("Agachamento smith").
+- Série marcada no card durante o treino atualiza a janela aberta na hora
+  (2 pendentes -> 1); sets pendentes saem esmaecidos com tag "pendente".
+- Zero erros no console. Não commitado/deployado ainda.
+
 ## 2026-09-04 — v6.3: cleaner set-summary lines
 
 ### Request (Pedro)

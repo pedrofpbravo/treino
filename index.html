@@ -249,6 +249,13 @@
   <!-- New / edit exercise -->
   <div id="sheet-exercise" class="sheet" hidden>
     <h3 id="sheet-exercise-title">Novo exercício</h3>
+    <button type="button" id="btn-exercise-history" class="link-row" hidden>
+      <span class="link-row-main">
+        <span class="link-row-label">Histórico</span>
+        <span class="link-row-sub" id="exercise-history-sub"></span>
+      </span>
+      <span class="link-row-chev" aria-hidden="true">›</span>
+    </button>
     <form id="exercise-form">
       <label class="field">
         <span>Nome *</span>
@@ -328,6 +335,13 @@
   <div id="sheet-detail" class="sheet" hidden>
     <h3 id="sheet-detail-title">Exercício</h3>
     <p id="detail-muscles" class="hint"></p>
+    <button type="button" id="btn-detail-history" class="link-row">
+      <span class="link-row-main">
+        <span class="link-row-label">Histórico</span>
+        <span class="link-row-sub" id="detail-history-sub"></span>
+      </span>
+      <span class="link-row-chev" aria-hidden="true">›</span>
+    </button>
     <form id="detail-form">
       <div class="field-row">
         <label class="field">
@@ -381,6 +395,18 @@
     <div class="sheet-actions">
       <span class="spacer"></span>
       <button type="button" class="btn ghost" data-close>Fechar</button>
+    </div>
+  </div>
+
+  <!-- Full log of one exercise (opened from the sheets above) -->
+  <div id="sheet-exlog" class="sheet sheet-stack" hidden>
+    <h3 id="sheet-exlog-title">Histórico</h3>
+    <p id="exlog-sub" class="hint"></p>
+    <div id="exlog-list"></div>
+    <p id="exlog-empty" class="empty" hidden>Nenhum registro para este exercício ainda.</p>
+    <div class="sheet-actions">
+      <span class="spacer"></span>
+      <button type="button" id="btn-exlog-close" class="btn primary">Fechar</button>
     </div>
   </div>
 

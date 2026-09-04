@@ -215,6 +215,27 @@ export function groupSessions(logs) {
   return sessions;
 }
 
+// Every logged session for one exercise, newest first, with the sets kept
+// separate (same formatting as setsParts) so the history can list them one
+// per line. Labels come from the log snapshots, so a deleted day or program
+// still reads correctly.
+export function exerciseHistory(logs, exerciseId) {
+  return (logs || [])
+    .filter((log) => log.exerciseId === exerciseId)
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || tsMillis(b) - tsMillis(a))
+    .map((log) => ({
+      id: log.id,
+      date: log.date,
+      dayName: log.dayName || "",
+      programName: log.programName || "",
+      sets: cloneSets(log.sets).map((s) => ({
+        weight: s.weight === null ? "" : fmtKg(s.weight),
+        reps: s.reps === null ? "?" : String(s.reps),
+        done: s.done,
+      })),
+    }));
+}
+
 // [{date, weight}] of the heaviest set per date for one exercise, ascending.
 export function progressionSeries(logs, exerciseId) {
   const byDate = new Map();

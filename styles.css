@@ -822,6 +822,46 @@ input, select { font: inherit; }
 .sheet-actions .spacer { flex: 1; }
 .sheet-actions .btn { width: auto; padding: 12px 18px; }
 
+/* a sheet opened from another sheet, layered on top of it */
+.sheet.sheet-stack { z-index: 55; }
+
+/* tappable "field" that opens another sheet (ex.: Histórico) */
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.link-row:active { background: var(--accent-soft); }
+.link-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.link-row-label { font-weight: 800; font-size: 15px; }
+.link-row-sub { font-size: 12px; color: var(--muted); }
+.link-row-chev { flex: none; font-size: 22px; color: var(--muted); line-height: 1; }
+
+/* ---------- exercise log sheet ---------- */
+#exlog-list .group { margin-bottom: 14px; }
+#exlog-list .group:last-child { margin-bottom: 0; }
+.exlog-set {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.exlog-set:last-child { border-bottom: none; }
+.exlog-set-n { flex: none; width: 62px; font-size: 12px; font-weight: 800; color: var(--muted); }
+.exlog-set-val { flex: 1; min-width: 0; }
+.exlog-set-reps { font-size: 14px; font-weight: 600; color: var(--muted); }
+.exlog-set-weight { font-size: 16px; font-weight: 800; }
+.exlog-set.pending { opacity: 0.5; }
+.exlog-set-pending { font-size: 11px; color: var(--muted); margin-left: 6px; }
+
 /* ---------- toast ---------- */
 #toast {
   position: fixed;

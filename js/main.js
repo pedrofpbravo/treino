@@ -29,6 +29,7 @@ import {
   groupSessions,
   progressionSeries,
   exercisesFromLogs,
+  exerciseHistory,
   weeklyFrequency,
   weeklyCardio,
   dailyCardio,
@@ -40,7 +41,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v6.3";
+const APP_VERSION = "v6.4";
 
 const $ = (id) => document.getElementById(id);
 
@@ -67,6 +68,7 @@ const state = {
   editingExerciseId: null,
   editingDayId: null,
   detailExerciseId: null,
+  exlogExerciseId: null, // exercise shown in the full-log sheet
   reorderMode: false,
   draftEntries: [], // day sheet: [{exerciseId, targetSets, repMin, repMax}]
   draftPrimaryMuscleId: null,
@@ -96,6 +98,7 @@ function openSheet(id) {
 }
 
 function closeSheets() {
+  state.exlogExerciseId = null;
   $("sheet-backdrop").hidden = true;
   document.querySelectorAll(".sheet").forEach((s) => (s.hidden = true));
 }
@@ -560,6 +563,7 @@ function openDetailSheet(exerciseId) {
   $("det-reps").value = entryReps(entry);
   $("det-refweight").value = ex.refWeight || "";
   $("det-note").value = ex.note || "";
+  $("detail-history-sub").textContent = historySummary(exerciseId);
   openSheet("sheet-detail");
 }
 
@@ -586,6 +590,114 @@ function submitDetailForm(e) {
   }).catch(() => toast("Erro ao salvar."));
 
   closeSheets();
+}
+
+// ---------- full log of one exercise ----------
+// Opened from the quick-detail sheet (Treino) or the edit sheet (Exercícios).
+// It stacks ON TOP of the sheet that opened it (higher z-index), so closing
+// it returns to that sheet with whatever was typed there still in place.
+// Every session ever logged, newest first, one line per set: this is the
+// screen for reading progression set by set.
+
+function exerciseLogName(exerciseId) {
+  const ex = state.exercisesById.get(exerciseId);
+  if (ex) return ex.name;
+  // deleted exercise: the log snapshots still carry the name
+  return state.logs.find((log) => log.exerciseId === exerciseId)?.exerciseName || "Exercício";
+}
+
+function historySummary(exerciseId) {
+  const n = state.logs.filter((log) => log.exerciseId === exerciseId).length;
+  if (n === 0) return "Nenhum registro ainda";
+  return n === 1 ? "1 sessão registrada" : `${n} sessões registradas`;
+}
+
+function openExerciseLog(exerciseId) {
+  if (!exerciseId) return;
+  state.exlogExerciseId = exerciseId;
+  renderExerciseLog();
+  openSheet("sheet-exlog");
+  $("sheet-exlog").scrollTop = 0;
+}
+
+function closeExerciseLog() {
+  state.exlogExerciseId = null;
+  $("sheet-exlog").hidden = true;
+}
+
+function renderExerciseLog() {
+  const exerciseId = state.exlogExerciseId;
+  if (!exerciseId) return;
+
+  const sessions = exerciseHistory(state.logs, exerciseId);
+  $("sheet-exlog-title").textContent = exerciseLogName(exerciseId);
+  $("exlog-sub").textContent =
+    sessions.length === 0
+      ? ""
+      : `${historySummary(exerciseId)} · de ${fmtDate(sessions[sessions.length - 1].date)} a ${fmtDate(sessions[0].date)}`;
+
+  const listEl = $("exlog-list");
+  listEl.innerHTML = "";
+  sessions.forEach((session) => {
+    const group = document.createElement("section");
+    group.className = "group";
+
+    const head = document.createElement("div");
+    head.className = "group-head session-head";
+    const line1 = document.createElement("span");
+    line1.textContent = [fmtDateFull(session.date), session.dayName].filter(Boolean).join(" · ");
+    head.appendChild(line1);
+    if (session.programName) {
+      const line2 = document.createElement("span");
+      line2.className = "session-prog";
+      line2.textContent = session.programName;
+      head.appendChild(line2);
+    }
+
+    const ul = document.createElement("ul");
+    ul.className = "group-items";
+    if (session.sets.length === 0) {
+      const li = document.createElement("li");
+      li.className = "exlog-set";
+      li.textContent = "Sem séries registradas";
+      ul.appendChild(li);
+    }
+    session.sets.forEach((set, idx) => {
+      const li = document.createElement("li");
+      li.className = "exlog-set" + (set.done ? "" : " pending");
+
+      const n = document.createElement("span");
+      n.className = "exlog-set-n";
+      n.textContent = `Série ${idx + 1}`;
+
+      const val = document.createElement("span");
+      val.className = "exlog-set-val";
+      const reps = document.createElement("span");
+      reps.className = "exlog-set-reps";
+      reps.textContent = set.weight ? `${set.reps}×` : `${set.reps} reps`;
+      val.appendChild(reps);
+      if (set.weight) {
+        const weight = document.createElement("span");
+        weight.className = "exlog-set-weight";
+        weight.textContent = set.weight;
+        val.appendChild(weight);
+      }
+      if (!set.done) {
+        const flag = document.createElement("span");
+        flag.className = "exlog-set-pending";
+        flag.textContent = "pendente";
+        val.appendChild(flag);
+      }
+
+      li.append(n, val);
+      ul.appendChild(li);
+    });
+
+    group.append(head, ul);
+    listEl.appendChild(group);
+  });
+
+  $("exlog-empty").hidden = sessions.length > 0;
 }
 
 // ---------- finish workout (summary of today's session) ----------
@@ -1130,6 +1242,8 @@ function openExerciseSheet(exerciseId) {
   $("ex-note").value = ex?.note || "";
   $("ex-error").hidden = true;
   $("btn-exercise-delete").hidden = !ex;
+  $("btn-exercise-history").hidden = !ex;
+  if (ex) $("exercise-history-sub").textContent = historySummary(ex.id);
 
   openSheet("sheet-exercise");
 }
@@ -2019,6 +2133,7 @@ function onLogs(logs) {
   renderTreino();
   renderExercises();
   renderHist();
+  if (!$("sheet-exlog").hidden) renderExerciseLog();
 }
 
 function onCardioTypes(types) {
@@ -2274,6 +2389,9 @@ function wire() {
   });
 
   // sheets
+  $("btn-detail-history").addEventListener("click", () => openExerciseLog(state.detailExerciseId));
+  $("btn-exercise-history").addEventListener("click", () => openExerciseLog(state.editingExerciseId));
+  $("btn-exlog-close").addEventListener("click", closeExerciseLog);
   $("sheet-backdrop").addEventListener("click", closeSheets);
   document.querySelectorAll("[data-close]").forEach((b) =>
     b.addEventListener("click", closeSheets)
