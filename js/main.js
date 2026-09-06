@@ -41,9 +41,22 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v6.4";
+const APP_VERSION = "v6.5";
 
 const $ = (id) => document.getElementById(id);
+
+const COLLAPSED_KEY = "gym:collapsed";
+let collapsedCards = new Set();
+try {
+  const stored = JSON.parse(localStorage.getItem(COLLAPSED_KEY) || "[]");
+  collapsedCards = new Set(Array.isArray(stored) ? stored.filter((key) => typeof key === "string") : []);
+} catch {
+  collapsedCards = new Set();
+}
+
+function saveCollapsedCards() {
+  localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedCards]));
+}
 
 // ---------- state ----------
 
@@ -55,6 +68,7 @@ const state = {
   days: [],
   logs: [],
   logsById: new Map(),
+  sessions: [],
   cardioTypes: [], // sorted by order
   cardio: [],
   tab: "treino",
@@ -120,6 +134,9 @@ const currentProgram = () => state.programs.find((p) => p.id === state.programId
 const currentDay = () => state.days.find((d) => d.id === state.dayId) || null;
 const daysOf = (programId) =>
   sortByOrder(state.days.filter((d) => d.programId === programId));
+const sessionId = (date, dayId) => `sess-${date}-${dayId}`;
+const finishedSession = (date, dayId) =>
+  state.sessions.find((session) => session.id === sessionId(date, dayId)) || null;
 
 // Reference line for an exercise: last logged weight wins, refWeight as
 // fallback before any history exists. The workout card passes today as
@@ -193,7 +210,7 @@ function renderTreino() {
   const chipsEl = $("day-chips");
   chipsEl.innerHTML = "";
   const days = state.programId ? daysOf(state.programId) : [];
-  const trainedDays = cycleDays(state.logs, state.programId, days);
+  const trainedDays = cycleDays(state.logs, state.programId, days, state.sessions);
   const today = todayStr();
   days.forEach((day) => {
     const chip = document.createElement("button");
@@ -339,7 +356,14 @@ function renderWorkout() {
   });
   $("day-progress").textContent =
     entries.length > 0 ? `${done}/${entries.length} feitos hoje` : "";
-  $("btn-finish-workout").hidden = done === 0;
+  const hasLogs = state.logs.some((log) =>
+    log.date === today && log.programId === day.programId && log.dayId === day.id
+  );
+  const isFinished = !!finishedSession(today, day.id);
+  const finishBtn = $("btn-finish-workout");
+  finishBtn.hidden = !hasLogs && !isFinished;
+  finishBtn.textContent = isFinished ? "Treino finalizado ✓" : "Finalizar treino";
+  finishBtn.classList.toggle("completed", isFinished);
   makeDraggableList(listEl);
 }
 
@@ -446,17 +470,19 @@ function makeDraggableList(list) {
 }
 
 // Compact card, uniform height: name + target, reference line, one-line
-// note. Muscles live in the Exercícios tab and the detail sheet. Tapping
-// the card body opens the quick-detail sheet; the circle toggles its log.
+// note. The card body toggles its sets; the gear opens the detail sheet.
 function buildWorkoutCard(entry, day, logId) {
   const ex = state.exercisesById.get(entry.exerciseId);
   const log = state.logsById.get(logId);
   const isDone = logDone(log);
   const program = currentProgram();
+  const collapsedKey = `${day.id}|${entry.exerciseId}`;
+  const isCollapsed = !!log && collapsedCards.has(collapsedKey);
 
   const card = document.createElement("div");
-  card.className = "workout-card" + (isDone ? " done" : "");
+  card.className = "workout-card" + (isDone ? " done" : "") + (isCollapsed ? " collapsed" : "");
   card.dataset.exerciseId = entry.exerciseId;
+  if (log) card.setAttribute("aria-expanded", String(!isCollapsed));
 
   const top = document.createElement("div");
   top.className = "wc-top";
@@ -470,9 +496,11 @@ function buildWorkoutCard(entry, day, logId) {
     e.stopPropagation();
     if (state.reorderMode) return;
     if (log) {
+      if (collapsedCards.delete(collapsedKey)) saveCollapsedCards();
       db.deleteLog(logId).catch(() => toast("Erro ao remover."));
       toast("Registro removido.");
     } else {
+      if (collapsedCards.delete(collapsedKey)) saveCollapsedCards();
       clearFinishedTimer();
       const last = lastLogFor(state.logs, entry.exerciseId, todayStr());
       db.saveLog({
@@ -531,14 +559,40 @@ function buildWorkoutCard(entry, day, logId) {
   main.appendChild(note);
 
   top.append(check, main);
-  card.appendChild(top);
+
+  if (log) {
+    const caret = document.createElement("span");
+    caret.className = "wc-caret";
+    caret.textContent = "⌄";
+    caret.setAttribute("aria-hidden", "true");
+    top.appendChild(caret);
+  }
 
   if (ex) {
+    const gear = document.createElement("button");
+    gear.type = "button";
+    gear.className = "wc-gear";
+    gear.textContent = "⚙";
+    gear.setAttribute("aria-label", `Ajustes de ${ex.name}`);
+    gear.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openDetailSheet(entry.exerciseId);
+    });
+    top.appendChild(gear);
+  }
+
+  card.appendChild(top);
+
+  if (log) {
     card.addEventListener("click", (e) => {
       if (state.reorderMode) return;
       if (card.dataset.suppressClick) return;
-      if (e.target.closest(".wc-check") || e.target.closest(".sets-editor")) return;
-      openDetailSheet(entry.exerciseId);
+      if (e.target.closest(".wc-check, .sets-editor, .wc-gear")) return;
+      const collapsed = card.classList.toggle("collapsed");
+      card.setAttribute("aria-expanded", String(!collapsed));
+      if (collapsed) collapsedCards.add(collapsedKey);
+      else collapsedCards.delete(collapsedKey);
+      saveCollapsedCards();
     });
   }
 
@@ -706,17 +760,18 @@ function openFinishSheet() {
   const day = currentDay();
   if (!day) return;
   const today = todayStr();
-  const doneLogs = (day.entries || [])
+  const logs = (day.entries || [])
     .map((en) => state.logsById.get(logDocId({ date: today, dayId: day.id, exerciseId: en.exerciseId })))
-    .filter(logDone);
-  if (doneLogs.length === 0) return;
+    .filter(Boolean);
+  const done = logs.filter(logDone).length;
+  const session = finishedSession(today, day.id);
 
   $("finish-sub").textContent =
-    `${fmtDateFull(today)} · ${day.name} · ${doneLogs.length} de ${(day.entries || []).length} exercícios`;
+    `${fmtDateFull(today)} · ${day.name} · ${done} de ${(day.entries || []).length} exercícios`;
 
   const ul = $("finish-list");
   ul.innerHTML = "";
-  doneLogs.forEach((log) => {
+  logs.forEach((log) => {
     const li = document.createElement("li");
     li.className = "row-line";
     const name = document.createElement("span");
@@ -725,18 +780,44 @@ function openFinishSheet() {
     const sub = document.createElement("span");
     sub.className = "row-sub";
     sub.textContent = setsLabel(log.sets) || "feito";
+    if (!logDone(log)) {
+      const flag = document.createElement("span");
+      flag.className = "exlog-set-pending";
+      flag.textContent = "incompleto";
+      sub.appendChild(flag);
+    }
     li.append(name, sub);
     ul.appendChild(li);
   });
+
+  $("btn-finish-confirm").hidden = !!session;
+  $("btn-finish-reopen").hidden = !session;
 
   openSheet("sheet-finish");
 }
 
 function confirmFinishWorkout() {
-  // Every check already saved its log; concluding just wraps up the session.
+  const day = currentDay();
+  if (!day) return;
+  const program = currentProgram();
+  db.finishSession({
+    date: todayStr(),
+    programId: program?.id || day.programId,
+    dayId: day.id,
+    dayName: day.name,
+    programName: program?.name || "",
+  }).catch(() => toast("Erro ao finalizar treino."));
   cancelTimer();
   closeSheets();
   toast("Treino registrado. Bom descanso!");
+}
+
+function unfinishWorkout() {
+  const day = currentDay();
+  if (!day) return;
+  db.unfinishSession(sessionId(todayStr(), day.id))
+    .catch(() => toast("Erro ao reabrir treino."));
+  closeSheets();
 }
 
 // The sets editor lives inside a card with a log. Every change re-saves the
@@ -1773,6 +1854,15 @@ function buildBackup() {
       programName: l.programName || "",
       sets: l.sets || [],
     })),
+    sessions: state.sessions.map((session) => ({
+      id: session.id,
+      date: session.date,
+      programId: session.programId || null,
+      dayId: session.dayId,
+      dayName: session.dayName || "",
+      programName: session.programName || "",
+      finishedAt: iso(session.finishedAt),
+    })),
     cardio: state.cardio.map((entry) => ({
       id: entry.id,
       date: entry.date,
@@ -1938,10 +2028,13 @@ const REFWEIGHT_MIGRATION_KEY = "gym:migrate-refweight-v6";
 const NOTE_DASH_FIX_KEY = "gym:fix-note-dash-v6-3";
 const SMITH_SEED_KEY = "gym:seed-smith-v6";
 const CARDIO_BIKES_KEY = "gym:cardio-bikes-v6-1";
+const FINISH_BACKFILL_KEY = "gym:session-backfill-v6-5";
+const FINISH_BACKFILL_DATES = ["2026-09-05"];
 let refWeightMigrationStarted = false;
 let noteDashFixStarted = false;
 let smithSeedStarted = false;
 let cardioBikesStarted = false;
+let finishBackfillStarted = false;
 
 async function migrateRefWeights(exercises) {
   if (refWeightMigrationStarted || localStorage.getItem(REFWEIGHT_MIGRATION_KEY)) return;
@@ -2082,6 +2175,36 @@ async function upsertCardioBikes(types) {
   }
 }
 
+// Sessions finished before v6.5 left no record: "Finalizar treino" used to
+// write nothing, so a day trained with one exercise left over never got its
+// check. Marks those days as finished from the logs they do have, so the id
+// is resolved at runtime and never goes stale.
+async function backfillFinishedSessions(logs) {
+  if (finishBackfillStarted || localStorage.getItem(FINISH_BACKFILL_KEY)) return;
+  const dated = logs.filter((log) => FINISH_BACKFILL_DATES.includes(log.date) && log.dayId);
+  if (dated.length === 0) return; // logs not in yet; the next snapshot retries
+  finishBackfillStarted = true;
+
+  const byDay = new Map();
+  dated.forEach((log) => {
+    const key = `${log.date}|${log.dayId}`;
+    if (!byDay.has(key)) byDay.set(key, log);
+  });
+
+  try {
+    await Promise.all([...byDay.values()].map((log) => db.finishSession({
+      date: log.date,
+      programId: log.programId || null,
+      dayId: log.dayId,
+      dayName: log.dayName || "",
+      programName: log.programName || "",
+    })));
+    localStorage.setItem(FINISH_BACKFILL_KEY, "1");
+  } catch {
+    finishBackfillStarted = false; // let the next snapshot try again
+  }
+}
+
 function onMuscles(muscles) {
   if (muscles.length === 0 && !state.seededMuscles) {
     state.seededMuscles = true;
@@ -2130,10 +2253,16 @@ function onDays(days) {
 function onLogs(logs) {
   state.logs = logs;
   state.logsById = new Map(logs.map((l) => [l.id, l]));
+  backfillFinishedSessions(logs);
   renderTreino();
   renderExercises();
   renderHist();
   if (!$("sheet-exlog").hidden) renderExerciseLog();
+}
+
+function onSessions(sessions) {
+  state.sessions = sessions;
+  renderTreino();
 }
 
 function onCardioTypes(types) {
@@ -2192,6 +2321,7 @@ function startListeners() {
   db.listenPrograms(onPrograms, err);
   db.listenDays(onDays, err);
   db.listenLogs(onLogs, err);
+  db.listenSessions(onSessions, err);
   db.listenCardioTypes(onCardioTypes, err);
   db.listenCardio(onCardio, err);
 }
@@ -2262,6 +2392,7 @@ function wire() {
   });
   $("btn-finish-workout").addEventListener("click", openFinishSheet);
   $("btn-finish-confirm").addEventListener("click", confirmFinishWorkout);
+  $("btn-finish-reopen").addEventListener("click", unfinishWorkout);
   $("btn-add-cardio").addEventListener("click", openCardioSheet);
   $("cardio-type").addEventListener("change", updateCardioTypeNote);
   $("cardio-form").addEventListener("submit", submitCardio);

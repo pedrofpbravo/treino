@@ -81,6 +81,7 @@ export const listenExercises = listenCollection("exercises");
 export const listenPrograms = listenCollection("programs");
 export const listenDays = listenCollection("days");
 export const listenLogs = listenCollection("logs");
+export const listenSessions = listenCollection("sessions");
 export const listenCardioTypes = listenCollection("cardioTypes");
 export const listenCardio = listenCollection("cardio");
 
@@ -313,6 +314,23 @@ export function deleteLog(logId) {
   return deleteDoc(doc(fs, "logs", logId));
 }
 
+// ---------- finished sessions ----------
+
+export function finishSession(data) {
+  return setDoc(doc(fs, "sessions", "sess-" + data.date + "-" + data.dayId), {
+    date: data.date,
+    programId: data.programId,
+    dayId: data.dayId,
+    dayName: data.dayName,
+    programName: data.programName,
+    finishedAt: serverTimestamp(),
+  });
+}
+
+export function unfinishSession(id) {
+  return deleteDoc(doc(fs, "sessions", id));
+}
+
 // ---------- cardio ----------
 
 export function createCardio(data) {
@@ -411,6 +429,18 @@ export async function importBackup(data) {
       programName: l.programName || "",
       sets: Array.isArray(l.sets) ? l.sets : [],
       ts: serverTimestamp(),
+    }]);
+  });
+
+  (data.sessions || []).forEach((session) => {
+    if (!session.id || !session.date || !session.dayId) return;
+    writes.push([doc(fs, "sessions", session.id), {
+      date: session.date,
+      programId: session.programId || null,
+      dayId: session.dayId,
+      dayName: session.dayName || "",
+      programName: session.programName || "",
+      finishedAt: serverTimestamp(),
     }]);
   });
 

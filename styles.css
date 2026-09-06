@@ -255,6 +255,28 @@ input, select { font: inherit; }
 .workout-card.done .wc-check { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 .wc-main { flex: 1; min-width: 0; }
+.wc-caret {
+  flex: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 150ms ease;
+}
+.workout-card.collapsed .wc-caret { transform: rotate(180deg); }
+.wc-gear {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .wc-nameline { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .wc-name {
   font-weight: 800;
@@ -299,6 +321,7 @@ input, select { font: inherit; }
 
 /* sets editor (visible while a log exists) */
 .sets-editor { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--accent-soft); }
+.workout-card.collapsed .sets-editor { display: none; }
 .set-row {
   display: flex;
   align-items: center;
@@ -351,6 +374,7 @@ input, select { font: inherit; }
 .btn-add-set { font-size: 14px; font-weight: 800; color: var(--accent-ink); padding: 4px 2px; }
 
 .finish-btn { margin-top: 14px; }
+.finish-btn.completed { background: transparent; color: var(--ink); border-color: var(--line); }
 
 .cardio-today { margin-top: 12px; }
 .cardio-add-btn { border-color: var(--accent); color: var(--accent-ink); }

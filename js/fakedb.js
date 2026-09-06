@@ -7,7 +7,7 @@
 import { normalize, logDocId, todayStr, addDaysStr, entryReps, parseRefWeight } from "./logic.js";
 import { DEFAULT_MUSCLES, DEFAULT_CARDIO_TYPES, SEED_EXERCISES, SEED_PROGRAMS } from "./seed.js";
 
-const ts = (ms = Date.now()) => ({ toMillis: () => ms });
+const ts = (ms = Date.now()) => ({ toMillis: () => ms, toDate: () => new Date(ms) });
 let nextId = 1;
 const id = (p) => `${p}-${nextId++}`;
 
@@ -61,6 +61,7 @@ const store = {
     }))
   ),
   logs: [],
+  sessions: [],
   cardio: [],
 };
 
@@ -145,6 +146,27 @@ function baseWeight(exerciseId) {
   });
 })();
 
+// Explicitly finished sessions with no logs make the new completion path
+// visible in debug mode as well as the legacy all-logs path above.
+(function generateFinishedSessions() {
+  const today = todayStr();
+  store.programs.slice(0, 2).forEach((prog, i) => {
+    const days = store.days.filter((day) => day.programId === prog.id);
+    const day = days[Math.min(i + 1, days.length - 1)];
+    if (!day) return;
+    const date = addDaysStr(today, -(3 + i));
+    store.sessions.push({
+      id: `sess-${date}-${day.id}`,
+      date,
+      programId: prog.id,
+      dayId: day.id,
+      dayName: day.name,
+      programName: prog.name,
+      finishedAt: ts(new Date(date + "T09:00").getTime()),
+    });
+  });
+})();
+
 (function generateCardio() {
   const today = todayStr();
   const types = store.cardioTypes.filter((type) => type.id !== "ct-outro");
@@ -175,7 +197,7 @@ function baseWeight(exerciseId) {
 
 // ---------- listener plumbing (same contract as db.js) ----------
 
-const listeners = { muscles: [], exercises: [], programs: [], days: [], logs: [], cardioTypes: [], cardio: [] };
+const listeners = { muscles: [], exercises: [], programs: [], days: [], logs: [], sessions: [], cardioTypes: [], cardio: [] };
 const emit = {};
 for (const key of Object.keys(listeners)) {
   emit[key] = () => listeners[key].forEach((cb) => cb(store[key].map((x) => ({ ...x }))));
@@ -196,6 +218,7 @@ export const listenExercises = listen("exercises");
 export const listenPrograms = listen("programs");
 export const listenDays = listen("days");
 export const listenLogs = listen("logs");
+export const listenSessions = listen("sessions");
 export const listenCardioTypes = listen("cardioTypes");
 export const listenCardio = listen("cardio");
 
@@ -341,6 +364,21 @@ export async function deleteLog(lid) {
   emit.logs();
 }
 
+// ---------- finished sessions ----------
+
+export async function finishSession(data) {
+  const sid = `sess-${data.date}-${data.dayId}`;
+  const session = { id: sid, ...data, finishedAt: ts() };
+  const idx = store.sessions.findIndex((item) => item.id === sid);
+  if (idx >= 0) store.sessions[idx] = session;
+  else store.sessions.push(session);
+  emit.sessions();
+}
+export async function unfinishSession(sid) {
+  store.sessions = store.sessions.filter((session) => session.id !== sid);
+  emit.sessions();
+}
+
 // ---------- cardio ----------
 
 export async function createCardio(data) {
@@ -377,6 +415,10 @@ export async function importBackup(data) {
   );
   (data.days || []).forEach((d) => upsert(store.days, { ...d }));
   (data.logs || []).forEach((l) => upsert(store.logs, { ...l, ts: ts() }));
+  (data.sessions || []).forEach((session) => {
+    if (!session.id || !session.date || !session.dayId) return;
+    upsert(store.sessions, { ...session, finishedAt: ts() });
+  });
   (data.cardio || []).forEach((entry) => upsert(store.cardio, { ...entry, ts: ts() }));
   Object.values(emit).forEach((fn) => fn());
 }

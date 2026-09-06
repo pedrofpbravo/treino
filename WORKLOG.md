@@ -307,3 +307,37 @@ Deploy once at the end: bump CACHE (sw.js) + APP_VERSION (main.js).
 - Fable review fix: primary combobox input now snaps back to the picked muscle name on blur (typed leftover text no longer desyncs from the stored pick).
 - Consolidated browser verification on #debug: all five acceptance sets passed. Cardio chart 14/12/6 bars with correct labels and titles, weeks list untouched; day chip doing -> ✓ -> doing verified (early false alarm was the test script clicking detached DOM nodes, not an app bug); drag inert with Ordenar off, immediate with it on; "Último" and history render 12×40kg with weight bold; sets editor reps-before-kg; comboboxes filter accent-insensitively, tags add/remove, exclusivity kept. Zero console errors.
 - Pending: deploy ritual (bump sw.js CACHE + main.js APP_VERSION, commit) awaiting Pedro's go.
+
+## 2026-09-06 - v6.5 batch (3 improvements)
+
+### Request (Pedro)
+1. Treino: gear/tool icon on each exercise card to reach today's settings (note, reference weight, target).
+2. Treino: tapping the exercise collapses/expands its sets.
+3. "Finalizar treino" must put the check on the day chip (push/pull etc.) even when not every exercise was completed; and fix the past pull session that was finished with all but one exercise.
+
+### Scope locked (Pedro's answers, 2026-09-06)
+- (1) Gear always visible at the card's right edge; it takes over the detail sheet, freeing the card body.
+- (2) Sets start expanded when the exercise is started; manual toggle only (nothing auto-collapses); state persisted in localStorage per day.
+- (3) New Firestore collection `sessions` (doc per finished date+day). Chip check = all exercises done OR session finished. Logs stay untouched.
+- Correction of the pull session: one-time code backfill, date 2026-09-05. No general "concluido" toggle in Historico.
+- Fable decisions (not asked): firestore.rules needs no change (wildcard on the UID); finish button becomes visible whenever at least one exercise is started; finished sessions can be reopened from the finish sheet.
+
+### Delegations
+- Brief 1 (items 1+2, card UI) -> codex exec --sandbox workspace-write, background. Brief at scratchpad/brief1.md.
+- Brief 2 (item 3, sessions collection) -> dispatched after 1 lands (both edit main.js). Brief at scratchpad/brief2.md.
+- Backfill of 2026-09-05: kept by Fable, resolves the dayId at runtime from that date's logs.
+
+### Results (2026-09-06)
+- Brief 1 delivered: `.wc-gear` button + `.wc-caret` appended to `.wc-top`, collapse toggled in place on the existing DOM node (no re-render, so a half-typed weight survives), `aria-expanded` on the card, `gym:collapsed` persistence, collapse key cleared when an exercise is unchecked.
+- Brief 2 delivered: `sessions` collection (db + fakedb + import/export), `cycleDays(logs, programId, days, finished = [])`, finish button visible whenever at least one exercise is started, finish sheet listing incomplete exercises with an `incompleto` tag, `Treino finalizado` state + `Reabrir treino`.
+- Neither Codex run could do browser QA (no browser surface in its sandbox); both verified only syntax and source contracts. All UI verification below is Fable's.
+- Fable review fixes: (a) reverted the `gym:debug-sessions` localStorage persistence Codex added to fakedb.js. fakedb is in-memory by design and nothing else in `#debug` survives a reload; it existed only to satisfy a reload criterion that was wrong in the brief. (b) `confirmFinishWorkout()` now falls back to `day.programId`/`""` instead of bailing out when `currentProgram()` is null, matching `buildWorkoutCard`. (c) `CLAUDE.md` localStorage line came back in pt-BR inside an English doc, rewritten.
+- Fable addition: the 2026-09-05 backfill (`gym:session-backfill-v6-5`, `FINISH_BACKFILL_DATES`). Resolves programId/dayId/names from that date's logs at runtime, so no hardcoded id can go stale; retries on the next snapshot if the logs have not arrived; marks every distinct day logged on a listed date.
+- Consolidated verification on `#debug` (mobile viewport 375x812), 51 assertions, all passing:
+  - 31 UI assertions: gear on 7/7 cards opening the detail sheet; start -> expanded; tap collapses/expands; value 99 survives the round trip; taps inside the sets editor and on the gear never collapse; collapse persisted; finish button visible at `0/7 feitos`; sheet showing the incomplete exercise tagged; confirm -> chip `✓ Push` + `Treino finalizado ✓`; `Reabrir treino` removing both; backfill flag set with `sess-2026-09-05-day-ppl-ul-push` resolved from the logs; backup carrying `sessions`; old-shape backup importing without error.
+  - 10 `cycleDays` unit assertions: legacy all-logs path intact, partial-without-session still unchecked, partial-with-session checked, finished-with-zero-logs checked, cycle reset via sessions and via a mix of sessions and logs, foreign program/day ignored, 3-arg call still working, next cycle starting fresh after a reset.
+  - 10 geometry assertions: gear 40x40 at the right edge, vertically centred, not overlapping the name, muted with no background; caret 12px to its left; `incompleto` tag separated by 6px and inside the row.
+  - Collapsed card height 85px, identical to an un-started card, so the uniform-height rule holds.
+  - Zero console errors on a clean boot in a fresh tab.
+- Test-env note (again): the browser served a stale `fakedb.js` after the edits and produced a ghost `db.listenSessions is not a function`. Fixed by refetching every asset with `cache: "reload"`. Unregistering the SW is not enough; the HTTP cache also has to be busted.
+- Pending: deploy ritual (bump sw.js CACHE + main.js APP_VERSION to v6.5, commit) awaiting Pedro's go. Open item: the backfill fires against real Firestore on Pedro's next load and marks EVERY day logged on 2026-09-05; correct if he trained once that day.

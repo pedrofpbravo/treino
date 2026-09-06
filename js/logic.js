@@ -93,11 +93,18 @@ export function logDone(log) {
 }
 
 // Days trained since the most recently completed program cycle. A session is
-// complete only when every current day entry has a completed log.
-export function cycleDays(logs, programId, days) {
+// complete when explicitly finished or when every current day entry has a
+// completed log (the latter keeps pre-sessions history working).
+export function cycleDays(logs, programId, days, finished = []) {
   const programDays = (days || []).filter((day) => day.programId === programId);
   const validDays = new Set(programDays.map((day) => day.id));
   if (validDays.size === 0) return new Set();
+
+  const finishedKeys = new Set();
+  for (const record of finished || []) {
+    if (record.programId !== programId || !validDays.has(record.dayId) || !record.date) continue;
+    finishedKeys.add(`${record.date}|${record.dayId}`);
+  }
 
   const sessions = new Map();
   for (const log of logs || []) {
@@ -110,9 +117,21 @@ export function cycleDays(logs, programId, days) {
     session.logs.push(log);
   }
 
+  for (const record of finished || []) {
+    if (record.programId !== programId || !validDays.has(record.dayId) || !record.date) continue;
+    const key = `${record.date}|${record.dayId}`;
+    if (!sessions.has(key)) {
+      const stamp = record.finishedAt && typeof record.finishedAt.toMillis === "function"
+        ? record.finishedAt.toMillis()
+        : 0;
+      sessions.set(key, { date: record.date, dayId: record.dayId, stamp, logs: [] });
+    }
+  }
+
   const trained = new Set();
   [...sessions.values()]
     .filter((session) => {
+      if (finishedKeys.has(`${session.date}|${session.dayId}`)) return true;
       const day = programDays.find((item) => item.id === session.dayId);
       const entries = Array.isArray(day?.entries) ? day.entries : [];
       return entries.length > 0 && entries.every((entry) =>
