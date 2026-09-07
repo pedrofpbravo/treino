@@ -1,10 +1,10 @@
-// Firebase layer (same architecture as MercadoJa: one thin module, CDN SDK,
+// Firebase layer (same architecture as MercadoJa: one thin module, vendored SDK,
 // no build step). Auth = one personal email/password account. Firestore with
 // persistent local cache (multi-tab) so everything works offline and syncs
 // on reconnect. All reads flow through onSnapshot listeners; all writes are
 // small targeted sets/updates so the UI can stay optimistic.
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { initializeApp } from "./vendor/firebase-app.js";
 import {
   getAuth,
   setPersistence,
@@ -12,7 +12,7 @@ import {
   signInWithEmailAndPassword,
   onAuthStateChanged,
   signOut,
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+} from "./vendor/firebase-auth.js";
 import {
   initializeFirestore,
   persistentLocalCache,
@@ -25,7 +25,7 @@ import {
   deleteDoc,
   writeBatch,
   serverTimestamp,
-} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+} from "./vendor/firebase-firestore.js";
 
 import { firebaseConfig } from "./config.js";
 import { normalize, logDocId } from "./logic.js";

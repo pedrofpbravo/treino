@@ -10,13 +10,44 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Treino">
+  <style>
+    html, body { background: #f8f3ec; }
+    #boot-splash {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f8f3ec;
+      color: #342b24;
+      font: 800 42px/1 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: -1.5px;
+      opacity: 1;
+      transition: opacity 160ms ease;
+    }
+    #boot-splash span { color: #f0916a; }
+    #boot-splash.is-hiding { opacity: 0; pointer-events: none; }
+    #boot-splash[hidden] { display: none; }
+    @media (prefers-reduced-motion: reduce) {
+      #boot-splash { transition-duration: 1ms; }
+    }
+  </style>
   <link rel="manifest" href="./manifest.webmanifest">
   <!-- ?v= busts Safari's aggressive icon cache when the artwork changes -->
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png?v=2">
   <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png?v=2">
   <link rel="stylesheet" href="./styles.css">
+  <link rel="modulepreload" href="./js/main.js">
+  <link rel="modulepreload" href="./js/db.js">
+  <link rel="modulepreload" href="./js/logic.js">
+  <link rel="modulepreload" href="./js/vendor/firebase-app.js">
+  <link rel="modulepreload" href="./js/vendor/firebase-auth.js">
+  <link rel="modulepreload" href="./js/vendor/firebase-firestore.js">
 </head>
 <body>
+
+  <div id="boot-splash" role="status" aria-label="Carregando Treino">Trei<span>no</span></div>
 
   <div id="offline-banner" hidden>Sem conexão. As alterações serão sincronizadas depois.</div>
 
@@ -188,12 +219,14 @@
       </section>
     </main>
 
-    <!-- REST TIMER: floating bar exists only while a countdown runs;
-         the presets live inline on the Treino tab -->
+    <!-- REST TIMER: floating bar exists while a countdown is active or finished -->
     <div id="timer-bar" hidden>
       <div id="timer-run">
-        <span class="timer-label">⏱ Descanso</span>
+        <span class="timer-label" aria-label="Descanso">⏱</span>
         <span id="timer-display">0:00</span>
+        <button class="timer-adjust" data-secs="60" type="button" aria-label="Descanso de 60 segundos">60</button>
+        <button class="timer-adjust" data-secs="90" type="button" aria-label="Descanso de 90 segundos">90</button>
+        <button class="timer-adjust" data-secs="120" type="button" aria-label="Descanso de 120 segundos">120</button>
         <button id="timer-cancel" type="button" aria-label="Fechar timer">✕</button>
       </div>
     </div>
@@ -288,7 +321,7 @@
       <label class="field">
         <span>Peso de referência</span>
         <span class="input-unit">
-          <input id="ex-refweight" type="number" step="0.5" min="0" inputmode="decimal" autocomplete="off" placeholder="0">
+          <input id="ex-refweight" type="text" inputmode="decimal" autocomplete="off" placeholder="0">
           <span class="input-unit-label">kg</span>
         </span>
       </label>
@@ -356,7 +389,7 @@
       <label class="field">
         <span>Peso de referência</span>
         <span class="input-unit">
-          <input id="det-refweight" type="number" step="0.5" min="0" inputmode="decimal" autocomplete="off" placeholder="0">
+          <input id="det-refweight" type="text" inputmode="decimal" autocomplete="off" placeholder="0">
           <span class="input-unit-label">kg</span>
         </span>
       </label>
@@ -383,6 +416,18 @@
       <span class="spacer"></span>
       <button type="button" class="btn ghost" data-close>Voltar</button>
       <button type="button" id="btn-finish-confirm" class="btn primary">Concluir treino</button>
+    </div>
+  </div>
+
+  <!-- Completed program cycle -->
+  <div id="sheet-cycle" class="sheet" hidden>
+    <h3>Semana concluída</h3>
+    <p id="cycle-sub" class="hint"></p>
+    <ul id="cycle-list" class="rows"></ul>
+    <p>Os treinos foram zerados para a nova semana.</p>
+    <div class="sheet-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn primary" data-close>Começar nova semana</button>
     </div>
   </div>
 

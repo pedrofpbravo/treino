@@ -4,7 +4,7 @@
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
-const fmtVal = (v) => (Number.isInteger(v) ? String(v) : String(v).replace(".", ","));
+const fmtVal = (v) => String(Math.round(Number(v) * 10) / 10);
 
 // Line chart of {label, value} points (progression: label = date).
 // Shows min/max on the y-axis, first/last labels on the x-axis and the

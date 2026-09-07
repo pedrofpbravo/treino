@@ -92,61 +92,63 @@ export function logDone(log) {
   return Array.isArray(log?.sets) && log.sets.length > 0 && log.sets.every((s) => s.done !== false);
 }
 
-// Days before this date may count as trained via complete logs (legacy rule,
-// pre-Iniciar/Finalizar). From this date on only an explicit finished session counts.
-export const EXPLICIT_FINISH_CUTOFF = "2026-09-08";
+export const CYCLE_START = "2026-09-08";
 
-// Days trained since the most recently completed program cycle. A session is
-// complete when explicitly finished. Before the cutoff, at least one completed
-// exercise also counts so pre-Iniciar/Finalizar history keeps working.
-export function cycleDays(logs, programId, days, finished = []) {
+// Progress is driven only by explicit finished-session documents. Historical
+// sessions stay untouched; the start date is only a read-time cycle boundary.
+export function cycleProgress(programId, days, finished, cycleStart = CYCLE_START) {
   const programDays = (days || []).filter((day) => day.programId === programId);
-  const validDays = new Set(programDays.map((day) => day.id));
-  if (validDays.size === 0) return new Set();
-
-  const finishedKeys = new Set();
-  for (const record of finished || []) {
-    if (record.programId !== programId || !validDays.has(record.dayId) || !record.date) continue;
-    finishedKeys.add(`${record.date}|${record.dayId}`);
-  }
+  const daysById = new Map(programDays.map((day) => [day.id, day]));
+  const total = daysById.size;
+  if (total === 0) return { trained: new Set(), total, completed: null };
 
   const sessions = new Map();
-  for (const log of logs || []) {
-    if (log.programId !== programId || !validDays.has(log.dayId) || !log.date) continue;
-    const key = `${log.date}|${log.dayId}`;
-    const stamp = tsMillis(log);
-    if (!sessions.has(key)) sessions.set(key, { date: log.date, dayId: log.dayId, stamp, logs: [] });
-    const session = sessions.get(key);
-    session.stamp = Math.min(session.stamp, stamp);
-    session.logs.push(log);
-  }
-
   for (const record of finished || []) {
-    if (record.programId !== programId || !validDays.has(record.dayId) || !record.date) continue;
+    if (
+      record.programId !== programId ||
+      !daysById.has(record.dayId) ||
+      !record.date ||
+      record.date < cycleStart
+    ) continue;
+
     const key = `${record.date}|${record.dayId}`;
-    if (!sessions.has(key)) {
-      const stamp = record.finishedAt && typeof record.finishedAt.toMillis === "function"
-        ? record.finishedAt.toMillis()
-        : 0;
-      sessions.set(key, { date: record.date, dayId: record.dayId, stamp, logs: [] });
+    const stamp = record.finishedAt && typeof record.finishedAt.toMillis === "function"
+      ? record.finishedAt.toMillis()
+      : 0;
+    const existing = sessions.get(key);
+    if (!existing || stamp < existing.stamp) {
+      sessions.set(key, { key, date: record.date, dayId: record.dayId, stamp });
     }
   }
 
-  const trained = new Set();
+  let trained = new Set();
+  let currentDays = [];
+  let completed = null;
   [...sessions.values()]
-    .filter((session) => {
-      if (finishedKeys.has(`${session.date}|${session.dayId}`)) return true;
-      if (session.date >= EXPLICIT_FINISH_CUTOFF) return false;
-      return session.logs.some(logDone);
-    })
     .sort((a, b) =>
       a.date.localeCompare(b.date) || a.stamp - b.stamp || a.dayId.localeCompare(b.dayId)
     )
-    .forEach(({ dayId }) => {
-      trained.add(dayId);
-      if (trained.size === validDays.size) trained.clear();
+    .forEach((session) => {
+      if (trained.has(session.dayId)) return;
+      trained.add(session.dayId);
+      currentDays.push({
+        dayId: session.dayId,
+        dayName: daysById.get(session.dayId)?.name || "",
+        date: session.date,
+      });
+      if (trained.size === total) {
+        completed = {
+          key: session.key,
+          date: session.date,
+          dayId: session.dayId,
+          days: currentDays,
+        };
+        trained = new Set();
+        currentDays = [];
+      }
     });
-  return trained;
+
+  return { trained, total, completed };
 }
 
 // A day entry's rep target is a single number. New docs store `reps`;
@@ -154,6 +156,22 @@ export function cycleDays(logs, programId, days, finished = []) {
 // range's top (no migration needed).
 export function entryReps(entry) {
   return Number(entry?.reps) || Number(entry?.repMax) || Number(entry?.repMin) || 10;
+}
+
+export function normalizeDecimalInput(raw) {
+  const cleaned = String(raw ?? "")
+    .replace(/,/g, ".")
+    .replace(/[^\d.]/g, "");
+  const dot = cleaned.indexOf(".");
+  if (dot < 0) return cleaned;
+  return cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, "");
+}
+
+export function parseDecimal(raw) {
+  const normalized = normalizeDecimalInput(raw);
+  if (!normalized || normalized === ".") return null;
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : null;
 }
 
 // First number in a refWeight string: "40–42,5 kg" -> 40, "12 kg cada" -> 12,
@@ -180,7 +198,7 @@ export function targetLabel(entry) {
   return `${entry.targetSets}×${entryReps(entry)}`;
 }
 
-const fmtKg = (w) => `${String(w).replace(".", ",")}kg`;
+const fmtKg = (w) => `${String(w)}kg`;
 
 // Structured set summaries for renderers that style weight and reps separately.
 // Weightless sets keep their useful reps value on its own.

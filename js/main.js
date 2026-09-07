@@ -20,8 +20,10 @@ import {
   lastLogFor,
   prefillSets,
   logDone,
-  cycleDays,
+  cycleProgress,
   entryReps,
+  normalizeDecimalInput,
+  parseDecimal,
   parseRefWeight,
   targetLabel,
   setsLabel,
@@ -40,7 +42,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v6.8";
+const APP_VERSION = "v7.0";
 
 const $ = (id) => document.getElementById(id);
 
@@ -103,6 +105,7 @@ const state = {
   seededPrograms: false,
   seededCardioTypes: false,
   listenersStarted: false,
+  lastTreinoRenderDate: null,
 };
 
 // ---------- tiny UI helpers ----------
@@ -151,12 +154,14 @@ const finishedSession = (date, dayId) =>
 function refWeightLabel(refWeight) {
   if (!refWeight) return "";
   const value = String(refWeight).trim();
-  return /^\d+(?:[.,]\d+)?$/.test(value) ? `${value.replace(".", ",")}kg` : value;
+  const parsed = parseDecimal(value);
+  return /^\d+(?:[.,]\d+)?$/.test(value) && parsed !== null ? `${String(parsed)}kg` : value;
 }
 
 function numericRefWeight(id) {
-  const value = $(id).value.trim().replace(",", ".");
-  return value === "" ? "" : String(Number(value));
+  const normalized = normalizeDecimalInput($(id).value.trim());
+  const value = parseDecimal(normalized);
+  return normalized === "" || value === null ? "" : String(Math.max(0, value));
 }
 
 // ---------- treino ----------
@@ -181,6 +186,8 @@ function selectDefaults() {
 
 function renderTreino() {
   selectDefaults();
+  const today = todayStr();
+  state.lastTreinoRenderDate = today;
 
   const select = $("program-select");
   select.innerHTML = "";
@@ -195,14 +202,11 @@ function renderTreino() {
   const chipsEl = $("day-chips");
   chipsEl.innerHTML = "";
   const days = state.programId ? daysOf(state.programId) : [];
-  const trainedDays = cycleDays(state.logs, state.programId, days, state.sessions);
-  const today = todayStr();
+  const trainedDays = cycleProgress(state.programId, days, state.sessions).trained;
   days.forEach((day) => {
     const chip = document.createElement("button");
     chip.type = "button";
-    const inProgress = !trainedDays.has(day.id) && state.logs.some((log) =>
-      log.date === today && log.programId === state.programId && log.dayId === day.id
-    );
+    const inProgress = !trainedDays.has(day.id) && workoutStarted(today, day.id);
     chip.className = "chip" + (day.id === state.dayId ? " on" : "") + (inProgress ? " doing" : "");
     chip.textContent = trainedDays.has(day.id) ? `✓ ${day.name}` : day.name;
     chip.addEventListener("click", () => {
@@ -312,8 +316,52 @@ function submitCardio(e) {
     .catch(() => toast("Erro ao registrar cardio."));
 }
 
+// The reminder duplicates the session-row button, so it is only worth showing
+// once that button has scrolled out of view. finishBtnVisible starts true when
+// IntersectionObserver exists (the button is on screen at the top of the tab);
+// without the API it stays false and the reminder falls back to always showing.
+let reminderAllowed = false;
+let finishBtnVisible = typeof IntersectionObserver === "function";
+let finishBtnObserver = null;
+
+function watchFinishButton() {
+  if (finishBtnObserver || typeof IntersectionObserver !== "function") return;
+  finishBtnObserver = new IntersectionObserver((entries) => {
+    finishBtnVisible = entries.some((entry) => entry.isIntersecting);
+    updateReminderVisibility();
+  });
+  finishBtnObserver.observe($("btn-finish-workout"));
+}
+
+function updateReminderVisibility() {
+  const reminder = $("workout-finish-reminder");
+  if (reminder) reminder.hidden = !reminderAllowed || finishBtnVisible;
+}
+
+function ensureWorkoutReminder(listEl) {
+  let reminder = $("workout-finish-reminder");
+  if (reminder) return reminder;
+
+  reminder = document.createElement("div");
+  reminder.id = "workout-finish-reminder";
+  reminder.className = "workout-reminder";
+
+  const text = document.createElement("span");
+  text.className = "workout-reminder-text";
+  const finish = document.createElement("button");
+  finish.type = "button";
+  finish.className = "workout-reminder-finish";
+  finish.textContent = "Finalizar";
+  finish.addEventListener("click", toggleWorkout);
+  reminder.append(text, finish);
+  listEl.before(reminder);
+  watchFinishButton();
+  return reminder;
+}
+
 function renderWorkout() {
   const listEl = $("workout-list");
+  const reminder = ensureWorkoutReminder(listEl);
   listEl.innerHTML = "";
   listEl.classList.toggle("reordering", state.reorderMode);
   const day = currentDay();
@@ -324,6 +372,8 @@ function renderWorkout() {
 
   $("workout-noday").hidden = !!day || state.programs.length === 0;
   if (!day) {
+    reminderAllowed = false;
+    updateReminderVisibility();
     $("workout-empty").hidden = true;
     $("day-progress").textContent = "";
     if (state.programs.length === 0) {
@@ -354,6 +404,13 @@ function renderWorkout() {
     : isStarted ? "Finalizar treino" : "Iniciar treino";
   finishBtn.classList.toggle("active", isStarted && !isFinished);
   finishBtn.classList.toggle("completed", isFinished);
+  const allDone = done === entries.length && entries.length > 0;
+  reminderAllowed = isStarted && !isFinished;
+  updateReminderVisibility();
+  reminder.classList.toggle("complete", allDone);
+  reminder.querySelector(".workout-reminder-text").textContent = allDone
+    ? "Todos os exercícios feitos"
+    : "Treino em andamento";
   makeDraggableList(listEl);
 }
 
@@ -470,41 +527,12 @@ function buildWorkoutCard(entry, day, logId) {
   const isCollapsed = !!log && collapsedCards.has(collapsedKey);
 
   const card = document.createElement("div");
-  card.className = "workout-card" + (isDone ? " done" : "") + (isCollapsed ? " collapsed" : "");
+  card.className = "workout-card" + (isDone ? " done" : log ? " in-progress" : "") + (isCollapsed ? " collapsed" : "");
   card.dataset.exerciseId = entry.exerciseId;
-  if (log) card.setAttribute("aria-expanded", String(!isCollapsed));
+  card.setAttribute("aria-expanded", String(!isCollapsed));
 
   const top = document.createElement("div");
   top.className = "wc-top";
-
-  const check = document.createElement("button");
-  check.type = "button";
-  check.className = "wc-check";
-  check.textContent = "✓";
-  check.setAttribute("aria-label", log ? "Desmarcar" : "Marcar como feito");
-  check.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (state.reorderMode) return;
-    if (log) {
-      if (collapsedCards.delete(collapsedKey)) saveCollapsedCards();
-      db.deleteLog(logId).catch(() => toast("Erro ao remover."));
-      toast("Registro removido.");
-    } else {
-      if (collapsedCards.delete(collapsedKey)) saveCollapsedCards();
-      clearFinishedTimer();
-      const last = lastLogFor(state.logs, entry.exerciseId, todayStr());
-      db.saveLog({
-        date: todayStr(),
-        programId: program?.id || day.programId,
-        dayId: day.id,
-        exerciseId: entry.exerciseId,
-        exerciseName: ex?.name || entry.exerciseId,
-        dayName: day.name,
-        programName: program?.name || "",
-        sets: prefillSets(last, entry, parseRefWeight(ex?.refWeight)),
-      }).catch(() => toast("Erro ao salvar."));
-    }
-  });
 
   const main = document.createElement("div");
   main.className = "wc-main";
@@ -524,11 +552,28 @@ function buildWorkoutCard(entry, day, logId) {
   }
   main.appendChild(nameLine);
 
+  // Reference line carries the status badge on its right: the name line stays
+  // free so a long exercise name is not truncated by a badge.
   const ref = document.createElement("span");
   ref.className = "wc-ref";
+  const refText = document.createElement("span");
+  refText.className = "wc-ref-text";
   const refWeight = refWeightLabel(ex?.refWeight);
-  ref.textContent = refWeight ? `Ref: ${refWeight}` : "";
-  if (!refWeight) ref.innerHTML = "&nbsp;";
+  refText.textContent = refWeight ? `Ref: ${refWeight}` : "";
+  if (!refWeight) refText.innerHTML = "&nbsp;";
+  ref.appendChild(refText);
+  if (log) {
+    const status = document.createElement("span");
+    status.className = "wc-status";
+    if (isDone) {
+      status.textContent = "✓ feito";
+    } else {
+      const sets = Array.isArray(log.sets) ? log.sets : [];
+      const completed = sets.filter((set) => set.done !== false).length;
+      status.textContent = `${completed}/${sets.length} séries`;
+    }
+    ref.appendChild(status);
+  }
   main.appendChild(ref);
 
   // always rendered (possibly empty) so every card has the same height
@@ -538,15 +583,13 @@ function buildWorkoutCard(entry, day, logId) {
   if (!ex?.note) note.innerHTML = "&nbsp;";
   main.appendChild(note);
 
-  top.append(check, main);
+  top.append(main);
 
-  if (log) {
-    const caret = document.createElement("span");
-    caret.className = "wc-caret";
-    caret.textContent = "⌄";
-    caret.setAttribute("aria-hidden", "true");
-    top.appendChild(caret);
-  }
+  const caret = document.createElement("span");
+  caret.className = "wc-caret";
+  caret.textContent = "⌄";
+  caret.setAttribute("aria-hidden", "true");
+  top.appendChild(caret);
 
   if (ex) {
     const gear = document.createElement("button");
@@ -563,18 +606,33 @@ function buildWorkoutCard(entry, day, logId) {
 
   card.appendChild(top);
 
-  if (log) {
-    card.addEventListener("click", (e) => {
-      if (state.reorderMode) return;
-      if (card.dataset.suppressClick) return;
-      if (e.target.closest(".wc-check, .sets-editor, .wc-gear")) return;
-      const collapsed = card.classList.toggle("collapsed");
-      card.setAttribute("aria-expanded", String(!collapsed));
-      if (collapsed) collapsedCards.add(collapsedKey);
-      else collapsedCards.delete(collapsedKey);
-      saveCollapsedCards();
-    });
-  }
+  card.addEventListener("click", (e) => {
+    if (state.reorderMode) return;
+    if (card.dataset.suppressClick) return;
+    if (e.target.closest(".sets-editor, .wc-gear")) return;
+    if (!log) {
+      if (collapsedCards.delete(collapsedKey)) saveCollapsedCards();
+      clearFinishedTimer();
+      const last = lastLogFor(state.logs, entry.exerciseId, todayStr());
+      db.saveLog({
+        date: todayStr(),
+        programId: program?.id || day.programId,
+        dayId: day.id,
+        exerciseId: entry.exerciseId,
+        exerciseName: ex?.name || entry.exerciseId,
+        dayName: day.name,
+        programName: program?.name || "",
+        sets: prefillSets(last, entry, parseRefWeight(ex?.refWeight)),
+      }).catch(() => toast("Erro ao salvar."));
+      return;
+    }
+
+    const collapsed = card.classList.toggle("collapsed");
+    card.setAttribute("aria-expanded", String(!collapsed));
+    if (collapsed) collapsedCards.add(collapsedKey);
+    else collapsedCards.delete(collapsedKey);
+    saveCollapsedCards();
+  });
 
   if (log) card.appendChild(buildSetsEditor(entry, day, log));
   return card;
@@ -799,19 +857,23 @@ function confirmFinishWorkout() {
   if (!day) return;
   const program = currentProgram();
   const today = todayStr();
+  const pendingSessionId = sessionId(today, day.id);
+  pendingFinishToastId = pendingSessionId;
   db.finishSession({
     date: today,
     programId: program?.id || day.programId,
     dayId: day.id,
     dayName: day.name,
     programName: program?.name || "",
-  }).catch(() => toast("Erro ao finalizar treino."));
+  }).catch(() => {
+    if (pendingFinishToastId === pendingSessionId) pendingFinishToastId = null;
+    toast("Erro ao finalizar treino.");
+  });
   if (localStorage.getItem("gym:workoutStart") === `${today}|${day.id}`) {
     localStorage.removeItem("gym:workoutStart");
   }
   cancelTimer();
   closeSheets();
-  toast("Treino registrado. Bom descanso!");
 }
 
 function unfinishWorkout() {
@@ -828,6 +890,13 @@ function buildSetsEditor(entry, day, log) {
   const wrap = document.createElement("div");
   wrap.className = "sets-editor";
   const sets = (log.sets || []).map((s) => ({ ...s, done: s.done !== false }));
+  const collapsedKey = `${day.id}|${entry.exerciseId}`;
+
+  const syncCollapsedState = () => {
+    if (sets.length > 0 && sets.every((set) => set.done)) collapsedCards.add(collapsedKey);
+    else collapsedCards.delete(collapsedKey);
+    saveCollapsedCards();
+  };
 
   const save = () => {
     db.saveLog({ ...log, sets }).catch(() => toast("Erro ao salvar."));
@@ -848,7 +917,8 @@ function buildSetsEditor(entry, day, log) {
     done.setAttribute("aria-label", set.done ? `Desmarcar série ${idx + 1}` : `Concluir série ${idx + 1}`);
     done.addEventListener("click", () => {
       sets[idx].done = !sets[idx].done;
-      if (sets[idx].done) clearFinishedTimer();
+      if (sets[idx].done) startTimer(DEFAULT_REST_SECS);
+      syncCollapsedState();
       save();
     });
 
@@ -871,15 +941,18 @@ function buildSetsEditor(entry, day, log) {
     const wLab = document.createElement("label");
     wLab.className = "set-weight";
     const weight = document.createElement("input");
-    weight.type = "number";
-    weight.min = "0";
-    weight.step = "0.5";
+    weight.type = "text";
     weight.inputMode = "decimal";
+    weight.autocomplete = "off";
     weight.placeholder = "kg";
     weight.value = set.weight ?? "";
+    weight.addEventListener("input", () => {
+      const normalized = normalizeDecimalInput(weight.value);
+      if (normalized !== weight.value) weight.value = normalized;
+    });
     weight.addEventListener("change", () => {
-      const v = Number(weight.value);
-      sets[idx].weight = weight.value === "" || !Number.isFinite(v) ? null : v;
+      const value = parseDecimal(weight.value);
+      sets[idx].weight = value === null ? null : Math.max(0, value);
       save();
     });
     wLab.append(weight, document.createTextNode("kg"));
@@ -892,6 +965,7 @@ function buildSetsEditor(entry, day, log) {
     rm.disabled = sets.length <= 1;
     rm.addEventListener("click", () => {
       sets.splice(idx, 1);
+      syncCollapsedState();
       save();
     });
 
@@ -906,6 +980,7 @@ function buildSetsEditor(entry, day, log) {
   add.addEventListener("click", () => {
     const prev = sets[sets.length - 1];
     sets.push({ reps: prev?.reps ?? entryReps(entry), weight: prev?.weight ?? null, done: false });
+    syncCollapsedState();
     save();
   });
   wrap.appendChild(add);
@@ -1921,49 +1996,18 @@ function importBackupFile(file) {
 // ---------- rest timer ----------
 // The absolute end time lives in localStorage, so the countdown survives
 // reloads and tab switches; the interval just recomputes from Date.now().
-// The floating bar only exists while a countdown is active; the preset
-// buttons are inline on the Treino tab.
+// Checking a set auto-starts DEFAULT_REST_SECS. The floating bar stays up for
+// the running countdown AND for the finished (blinking) state, and carries its
+// own 60/90/120 buttons; the inline preset row on the Treino tab is the
+// alternative entry point when no countdown is running.
 
 const TIMER_KEY = "gym:timerEnd";
+const DEFAULT_REST_SECS = 90;
 let timerInterval = null;
 let timerActive = false;
 let timerFinished = false;
-let audioCtx = null;
-
-function ensureAudio() {
-  try {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") audioCtx.resume();
-  } catch {
-    audioCtx = null;
-  }
-}
-
-function beep() {
-  if (!audioCtx) return;
-  try {
-    const t = audioCtx.currentTime;
-    const addTone = (frequency, volume) => {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.frequency.setValueAtTime(frequency, t);
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      gain.gain.setValueAtTime(0.001, t);
-      gain.gain.linearRampToValueAtTime(volume, t + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 1);
-      osc.start(t);
-      osc.stop(t + 1.05);
-    };
-    addTone(880, 0.18);
-    addTone(1760, 0.045);
-  } catch {
-    // sem áudio, sem problema
-  }
-}
 
 function startTimer(secs) {
-  ensureAudio(); // unlocked here, on the user's tap (iOS requirement)
   timerFinished = false;
   $("timer-bar").classList.remove("flash");
   localStorage.setItem(TIMER_KEY, String(Date.now() + secs * 1000));
@@ -1999,8 +2043,6 @@ function runTimer() {
       clearInterval(timerInterval);
       timerInterval = null;
       localStorage.removeItem(TIMER_KEY);
-      if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
-      beep();
       timerActive = false;
       timerFinished = true;
       $("timer-bar").classList.add("flash");
@@ -2254,9 +2296,49 @@ function onLogs(logs) {
   if (!$("sheet-exlog").hidden) renderExerciseLog();
 }
 
+let pendingFinishToastId = null;
+
+function showCompletedCycle(program, progress) {
+  $("cycle-sub").textContent =
+    `Você concluiu os ${progress.total} treinos de ${program.name}.`;
+  const list = $("cycle-list");
+  list.innerHTML = "";
+  progress.completed.days.forEach((day) => {
+    const li = document.createElement("li");
+    li.className = "row-line";
+    const name = document.createElement("span");
+    name.className = "row-name";
+    name.textContent = day.dayName;
+    const date = document.createElement("span");
+    date.className = "row-sub";
+    date.textContent = fmtDate(day.date);
+    li.append(name, date);
+    list.appendChild(li);
+  });
+  openSheet("sheet-cycle");
+}
+
 function onSessions(sessions) {
   state.sessions = sessions;
   renderTreino();
+  queueMicrotask(() => {
+    if (state.sessions !== sessions) return;
+    const program = currentProgram();
+    const progress = cycleProgress(state.programId, daysOf(state.programId), sessions);
+    const completed = progress.completed;
+    const guardKey = `gym:cycle-celebrated:${state.programId}`;
+    const shouldCelebrate =
+      !!program && !!completed && localStorage.getItem(guardKey) !== completed.key;
+    if (shouldCelebrate) {
+      localStorage.setItem(guardKey, completed.key);
+      showCompletedCycle(program, progress);
+    }
+
+    if (pendingFinishToastId && sessions.some((session) => session.id === pendingFinishToastId)) {
+      pendingFinishToastId = null;
+      if (!shouldCelebrate) toast("Treino registrado. Bom descanso!");
+    }
+  });
 }
 
 function onCardioTypes(types) {
@@ -2295,12 +2377,25 @@ function switchTab(tab) {
 
 // ---------- auth + boot ----------
 
+function hideBootSplash() {
+  const splash = $("boot-splash");
+  if (!splash || splash.hidden || splash.classList.contains("is-hiding")) return;
+  splash.classList.add("is-hiding");
+  const finish = () => {
+    splash.hidden = true;
+  };
+  splash.addEventListener("transitionend", finish, { once: true });
+  window.setTimeout(finish, 220);
+}
+
 function showLogin() {
+  hideBootSplash();
   $("screen-login").hidden = false;
   $("app-shell").hidden = true;
 }
 
 function showApp() {
+  hideBootSplash();
   $("screen-login").hidden = true;
   $("app-shell").hidden = false;
   startListeners();
@@ -2483,7 +2578,18 @@ function wire() {
   document.querySelectorAll(".timer-preset").forEach((b) =>
     b.addEventListener("click", () => startTimer(Number(b.dataset.secs)))
   );
+  document.querySelectorAll(".timer-adjust").forEach((btn) =>
+    btn.addEventListener("click", () => startTimer(Number(btn.dataset.secs)))
+  );
   $("timer-cancel").addEventListener("click", cancelTimer);
+
+  ["ex-refweight", "det-refweight"].forEach((id) => {
+    const input = $(id);
+    input.addEventListener("input", () => {
+      const normalized = normalizeDecimalInput(input.value);
+      if (normalized !== input.value) input.value = normalized;
+    });
+  });
 
   // ajustes
   $("muscle-add-form").addEventListener("submit", (e) => {
@@ -2525,6 +2631,11 @@ function wire() {
   // offline indicator
   window.addEventListener("online", updateOnline);
   window.addEventListener("offline", updateOnline);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    const today = todayStr();
+    if (state.lastTreinoRenderDate && today !== state.lastTreinoRenderDate) renderTreino();
+  });
   updateOnline();
 }
 
@@ -2547,6 +2658,7 @@ function boot() {
   else updateTimerVisibility();
 
   if (!db.isConfigured()) {
+    hideBootSplash();
     showLogin();
     $("setup-warning").hidden = false;
     $("login-form").querySelectorAll("input, button").forEach((el) => (el.disabled = true));
@@ -2560,7 +2672,7 @@ function boot() {
   });
 
   if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(() => {});
+    navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).catch(() => {});
   }
 }
 

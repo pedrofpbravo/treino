@@ -379,3 +379,62 @@ UI do Iniciar/Finalizar estava feia (pillão preto colado nos cards); mais respi
 ### Execução
 - Brief C (Codex): session-row no index.html + CSS, .active/.completed no renderWorkout, cycleDays fallback pré-cutoff = ≥1 logDone (reset do ciclo intacto, testes node passaram: 1/3 done conta, none-done não, pós-cutoff só sessão, all-trained reseta), finish-min-hint + confirm disabled, bump v6.8.
 - Review: alturas desiguais na linha (49px vs 37px) → follow-up no mesmo thread, botão agora padding 8px/14px font 14px. Verificado no browser: mesma linha, mesma altura, gap 16px, guard do Concluir funcionando, chips ✓ pelo novo fallback.
+
+## 2026-09-07 — v7.0 (em andamento): card sem checkbox, timer automático, decimais com ponto, ciclo semanal explícito, performance
+
+### Request (Pedro)
+1. Tirar o checkbox do card de exercício (manter só nas séries) e não perder as séries já marcadas ao colapsar/expandir.
+2. Destaque para não esquecer de finalizar o treino depois de iniciar.
+3. Aceitar decimais no peso (82.5).
+4. Ciclo semanal: ✓ só com "Finalizar treino"; ao completar os 5 dias, popup "Semana concluída" e reset. Marcar exercício do último dia NÃO pode resetar.
+5. Remover o beep do timer.
+6. Cada série marcada inicia o timer (padrão 90s), com 60/90/120 ajustáveis no próprio timer.
+7. Ao marcar todas as séries, autocolapsar o card e marcá-lo como concluído por cor.
+8. Diagnóstico de performance: tela branca de ~5s ao voltar para o app.
+
+### Scope locked (1 rodada)
+- Iniciar exercício = toque no corpo do card. Remoção de registro só pelo Histórico (swipe), nunca na aba Treino.
+- Decimais: padrão único é o PONTO. Entrada aceita a vírgula do teclado pt-BR do iOS e normaliza para ponto na hora; 85 continua 85.
+- Timer: sem beep E sem vibração (pedido adicional); padrão sempre 90s, 60/120 são exceções pontuais; linha inline "⏱ Descanso" mantida como alternativa.
+- Ciclo novo começa em 2026-09-08 (o 5º treino do ciclo antigo foi em 07/09); histórico preservado, apenas filtro de leitura.
+- Diagnóstico de performance aceito com vendoring do SDK Firebase.
+
+### Delegations
+- Brief A (`scratchpad/brief-a.md`): remover `.wc-check`, tap-to-start, autocolapso, badge de estado, lembrete sticky. ENTREGUE e verificado.
+- Brief B (`scratchpad/brief-b.md`): remover beep/vibração, auto-start 90s na série, botões 60/90/120 na barra, decimais com ponto. ENTREGUE e verificado.
+- Brief E (`scratchpad/brief-e.md`, criado após review visual): badge sai da linha do nome, lembrete só quando o botão sai de vista, borda accent no in-progress, folga para a barra do timer, comentário desatualizado. IMPLEMENTADO POR FABLE sob autorização explícita do Pedro em chat (Codex bloqueado); patch em `scratchpad/patch-e.py`.
+- Brief C (`scratchpad/brief-c.md`): ciclo só por sessão explícita + CYCLE_START + popup. BLOQUEADO (Codex).
+- Brief D (`scratchpad/brief-d.md`): SW com precache cache-first, SDK Firebase vendorizado em js/vendor/, splash inline, modulepreload, re-render por mudança de data, bump v7.0. PENDENTE.
+
+### Review findings (visual, 375px)
+- Badge na linha do nome truncava o nome ("Supino máq..."). Corrigido no brief E: badge vai para a linha "Ref:".
+- Dois controles de finalizar empilhados no topo. Corrigido: lembrete sticky só aparece quando `#btn-finish-workout` sai de vista (IntersectionObserver).
+- Borda esquerda `accent-soft` do in-progress era invisível. Trocada por `accent`.
+- Último card ficava sob a barra do timer. `padding-bottom: 64px` no `.workout-list`.
+- Falso positivo do meu review: a barra do timer já era opaca (`#fdf0e7` no `#timer-run`); o que se via era o card ATRÁS dela, não bleed-through.
+
+### Verificação no browser (#debug, porta 8095)
+- Tap no card cria o log com séries pré-preenchidas e expande; 3ª série marcada → `workout-card done collapsed` + badge "✓ feito"; reexpandir mantém as 3 séries (10 reps / 30kg) — o bug de "zerar" era o toque acertando o ✓ que apagava o log.
+- Desmarcar série volta para in-progress e mantém expandido.
+- Marcar série inicia 1:30 na barra; barra em uma linha: ⏱ | 1:12 | 60 | 90 | 120 | ✕.
+- "82,5" digitado vira "82.5" e grava 82.5; lixo "8a2..5,7" vira "82.57".
+- Alturas de card idênticas com e sem badge (88px); nome completo sem elipse.
+- Lembrete: escondido no topo, visível ao rolar, escondido ao voltar.
+
+### Problemas de infra (para a próxima sessão)
+- Plugin Codex: "approval request failed" (modo conhecido do CLAUDE.md). Fallback `codex exec --sandbox workspace-write --model gpt-5.6-sol -c model_reasoning_effort=xhigh` autorizado pelo Pedro; funcionou em A e B e depois passou a rejeitar TODO comando (helper de sandbox do Windows falha ao subir; `approval_policy = "never"` não tem quem responda, daí o erro de aprovação). `~/.codex/config.toml` já tem `sandbox_mode = "workspace-write"` e `approval_policy = "never"`.
+- `.claude/launch.json`: `autoPort` reporta uma porta nova mas continua subindo `python -m http.server 8095`, então o servidor morre na hora e a URL anunciada não responde. Além disso havia 4 processos python zumbis no 8095 (ERR_EMPTY_RESPONSE). Resolvido matando os zumbis e deixando o preview subir em 8095.
+
+### Fechamento v7.0 (2026-09-07)
+
+- Brief C ENTREGUE após reinício do app do Codex: `cycleDays` virou `cycleProgress(programId, days, finished, cycleStart)`, `EXPLICIT_FINISH_CUTOFF` removido, `CYCLE_START = "2026-09-08"`, sheet `#sheet-cycle` + guard `gym:cycle-celebrated:<programId>`. 6 testes node passaram. Verificado no browser: 4 sessões = 4 ✓ sem popup; a 5ª zera os ✓ e devolve os 5 dias na ordem; sessões de 05–07/09 são ignoradas; chips agora aparecem TODOS sem ✓.
+- Brief D ENTREGUE: SDK Firebase 10.12.2 vendorizado em `js/vendor/` (app 102KB, auth 151KB, firestore 437KB, imports internos reescritos para `./firebase-app.js`), `sw.js` reescrito (PRECACHE de 17 entradas, install com `cache: "reload"`, cache-first + revalidação em background, navegação servida do index cacheado), splash inline `#boot-splash`, 6 `modulepreload`, re-render por mudança de data no `visibilitychange`, registro do SW com `updateViaCache: "none"`, bump v7.0.
+- Medição pós-D no browser (localhost, 2º load): 0 requisições ao gstatic, TODOS os assets servidos de `cache-storage` (firebase-firestore.js em 7ms), DOMContentLoaded 70ms, cache `treino-v7.0` com 17 entradas. Sem erros no console; 4 abas funcionando.
+- Ordem final de execução: A → B → E (polish) → C → D.
+
+### Riscos e pendências
+- Popup "Semana concluída" nunca foi disparado ponta a ponta (hoje é 07/09 e o ciclo só conta de 08/09 em diante). A lógica está coberta por testes node + verificação com dados sintéticos no browser, e o sheet foi inspecionado visualmente, mas o gatilho real só acontece quando os 5 dias forem finalizados a partir de 08/09.
+- `install` do SW usa `cache.addAll`: se UM arquivo do PRECACHE der 404 num deploy futuro, o SW inteiro falha a instalação (app continua funcionando online, sem offline). Manter a lista em dia ao adicionar arquivos.
+- Em novo dispositivo (ou localStorage limpo) com um ciclo já completo dentro da janela, o popup aparece uma vez indevidamente. Aceito.
+- `CLAUDE.md` (não commitado antes desta sessão) diz "nunca use `codex exec`", mas o plugin auto-nega todo comando nesta máquina e o `codex exec` foi o que funcionou. Vale revisar essa seção com o Pedro.
+- `scratchpad/` continua fora do git (inclui logs do Codex de ~1,2MB). Sem `.gitignore` no repo.
