@@ -92,9 +92,13 @@ export function logDone(log) {
   return Array.isArray(log?.sets) && log.sets.length > 0 && log.sets.every((s) => s.done !== false);
 }
 
+// Days before this date may count as trained via complete logs (legacy rule,
+// pre-Iniciar/Finalizar). From this date on only an explicit finished session counts.
+export const EXPLICIT_FINISH_CUTOFF = "2026-09-08";
+
 // Days trained since the most recently completed program cycle. A session is
-// complete when explicitly finished or when every current day entry has a
-// completed log (the latter keeps pre-sessions history working).
+// complete when explicitly finished. Before the cutoff, complete logs also
+// count so pre-Iniciar/Finalizar history keeps working.
 export function cycleDays(logs, programId, days, finished = []) {
   const programDays = (days || []).filter((day) => day.programId === programId);
   const validDays = new Set(programDays.map((day) => day.id));
@@ -132,6 +136,7 @@ export function cycleDays(logs, programId, days, finished = []) {
   [...sessions.values()]
     .filter((session) => {
       if (finishedKeys.has(`${session.date}|${session.dayId}`)) return true;
+      if (session.date >= EXPLICIT_FINISH_CUTOFF) return false;
       const day = programDays.find((item) => item.id === session.dayId);
       const entries = Array.isArray(day?.entries) ? day.entries : [];
       return entries.length > 0 && entries.every((entry) =>

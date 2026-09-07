@@ -25,7 +25,6 @@ import {
   parseRefWeight,
   targetLabel,
   setsLabel,
-  setsParts,
   groupSessions,
   progressionSeries,
   exercisesFromLogs,
@@ -41,7 +40,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v6.5";
+const APP_VERSION = "v6.7";
 
 const $ = (id) => document.getElementById(id);
 
@@ -56,6 +55,17 @@ try {
 
 function saveCollapsedCards() {
   localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedCards]));
+}
+
+function workoutStarted(date, dayId) {
+  const stored = localStorage.getItem("gym:workoutStart");
+  if (!stored) return false;
+  const separator = stored.indexOf("|");
+  if (separator < 0 || stored.slice(0, separator) !== date) {
+    localStorage.removeItem("gym:workoutStart");
+    return false;
+  }
+  return stored === `${date}|${dayId}`;
 }
 
 // ---------- state ----------
@@ -138,35 +148,10 @@ const sessionId = (date, dayId) => `sess-${date}-${dayId}`;
 const finishedSession = (date, dayId) =>
   state.sessions.find((session) => session.id === sessionId(date, dayId)) || null;
 
-// Reference line for an exercise: last logged weight wins, refWeight as
-// fallback before any history exists. The workout card passes today as
-// beforeDate so it always compares against the PREVIOUS session.
-function lastLine(exerciseId, refWeight, beforeDate = "9999-99-99") {
-  const last = lastLogFor(state.logs, exerciseId, beforeDate);
-  if (last) return { label: "Último", text: setsLabel(last.sets), sets: last.sets, date: fmtDate(last.date) };
-  if (refWeight) {
-    const value = String(refWeight).trim();
-    const text = /^\d+(?:[.,]\d+)?$/.test(value) ? `${value.replace(".", ",")}kg` : value;
-    return { label: "Ref", text, date: "" };
-  }
-  return null;
-}
-
-function appendStyledSets(container, sets) {
-  setsParts(sets).forEach((set, idx) => {
-    if (idx > 0) container.appendChild(document.createTextNode(" · "));
-    const reps = document.createElement("span");
-    reps.className = "wc-last-reps";
-    reps.textContent = set.reps;
-    container.appendChild(reps);
-    if (set.weight) {
-      container.appendChild(document.createTextNode("×"));
-      const weight = document.createElement("span");
-      weight.className = "wc-last-weight";
-      weight.textContent = set.weight;
-      container.appendChild(weight);
-    }
-  });
+function refWeightLabel(refWeight) {
+  if (!refWeight) return "";
+  const value = String(refWeight).trim();
+  return /^\d+(?:[.,]\d+)?$/.test(value) ? `${value.replace(".", ",")}kg` : value;
 }
 
 function numericRefWeight(id) {
@@ -332,6 +317,10 @@ function renderWorkout() {
   listEl.innerHTML = "";
   listEl.classList.toggle("reordering", state.reorderMode);
   const day = currentDay();
+  const today = todayStr();
+  const finishBtn = $("btn-finish-workout");
+  const startedByTap = workoutStarted(today, day?.id);
+  finishBtn.hidden = !day;
 
   $("workout-noday").hidden = !!day || state.programs.length === 0;
   if (!day) {
@@ -347,7 +336,6 @@ function renderWorkout() {
   const entries = day.entries || [];
   $("workout-empty").hidden = entries.length > 0;
 
-  const today = todayStr();
   let done = 0;
   entries.forEach((entry) => {
     const logId = logDocId({ date: today, dayId: day.id, exerciseId: entry.exerciseId });
@@ -360,9 +348,10 @@ function renderWorkout() {
     log.date === today && log.programId === day.programId && log.dayId === day.id
   );
   const isFinished = !!finishedSession(today, day.id);
-  const finishBtn = $("btn-finish-workout");
-  finishBtn.hidden = !hasLogs && !isFinished;
-  finishBtn.textContent = isFinished ? "Treino finalizado ✓" : "Finalizar treino";
+  const isStarted = startedByTap || hasLogs;
+  finishBtn.textContent = isFinished
+    ? "Treino finalizado ✓"
+    : isStarted ? "Finalizar treino" : "Iniciar treino";
   finishBtn.classList.toggle("completed", isFinished);
   makeDraggableList(listEl);
 }
@@ -534,22 +523,12 @@ function buildWorkoutCard(entry, day, logId) {
   }
   main.appendChild(nameLine);
 
-  const ref = lastLine(entry.exerciseId, ex?.refWeight, todayStr());
-  const lastEl = document.createElement("span");
-  lastEl.className = "wc-last";
-  if (ref) {
-    lastEl.appendChild(document.createTextNode(`${ref.label}: `));
-    if (ref.sets) appendStyledSets(lastEl, ref.sets);
-    else {
-      const value = document.createElement("b");
-      value.textContent = ref.text;
-      lastEl.appendChild(value);
-    }
-    if (ref.date) lastEl.appendChild(document.createTextNode(` · ${ref.date}`));
-  } else {
-    lastEl.innerHTML = "&nbsp;";
-  }
-  main.appendChild(lastEl);
+  const ref = document.createElement("span");
+  ref.className = "wc-ref";
+  const refWeight = refWeightLabel(ex?.refWeight);
+  ref.textContent = refWeight ? `Ref: ${refWeight}` : "";
+  if (!refWeight) ref.innerHTML = "&nbsp;";
+  main.appendChild(ref);
 
   // always rendered (possibly empty) so every card has the same height
   const note = document.createElement("span");
@@ -796,17 +775,36 @@ function openFinishSheet() {
   openSheet("sheet-finish");
 }
 
+function toggleWorkout() {
+  const day = currentDay();
+  if (!day) return;
+  const today = todayStr();
+  const hasLogs = state.logs.some((log) =>
+    log.date === today && log.programId === day.programId && log.dayId === day.id
+  );
+  if (!finishedSession(today, day.id) && !hasLogs && !workoutStarted(today, day.id)) {
+    localStorage.setItem("gym:workoutStart", `${today}|${day.id}`);
+    renderWorkout();
+    return;
+  }
+  openFinishSheet();
+}
+
 function confirmFinishWorkout() {
   const day = currentDay();
   if (!day) return;
   const program = currentProgram();
+  const today = todayStr();
   db.finishSession({
-    date: todayStr(),
+    date: today,
     programId: program?.id || day.programId,
     dayId: day.id,
     dayName: day.name,
     programName: program?.name || "",
   }).catch(() => toast("Erro ao finalizar treino."));
+  if (localStorage.getItem("gym:workoutStart") === `${today}|${day.id}`) {
+    localStorage.removeItem("gym:workoutStart");
+  }
   cancelTimer();
   closeSheets();
   toast("Treino registrado. Bom descanso!");
@@ -1168,6 +1166,8 @@ function renderExercises() {
         .map(muscleName)
         .filter(Boolean);
       if (extras.length > 0) subParts.push(extras.join(", "));
+      const refWeight = refWeightLabel(ex.refWeight);
+      if (refWeight) subParts.push(`Ref: ${refWeight}`);
       if (ex.note) subParts.push(ex.note.split("\n")[0]);
       if (subParts.length > 0) {
         const sub = document.createElement("span");
@@ -1176,17 +1176,7 @@ function renderExercises() {
         main.appendChild(sub);
       }
 
-      const side = document.createElement("div");
-      side.className = "item-side";
-      const ref = lastLine(ex.id, ex.refWeight);
-      if (ref) {
-        const b = document.createElement("b");
-        b.textContent = ref.text;
-        side.appendChild(b);
-        side.appendChild(document.createTextNode(ref.date ? `${ref.label} · ${ref.date}` : ref.label));
-      }
-
-      li.append(main, side);
+      li.appendChild(main);
       li.addEventListener("click", () => openExerciseSheet(ex.id));
       ul.appendChild(li);
     });
@@ -2390,7 +2380,7 @@ function wire() {
     state.reorderMode = !state.reorderMode;
     renderTreino();
   });
-  $("btn-finish-workout").addEventListener("click", openFinishSheet);
+  $("btn-finish-workout").addEventListener("click", toggleWorkout);
   $("btn-finish-confirm").addEventListener("click", confirmFinishWorkout);
   $("btn-finish-reopen").addEventListener("click", unfinishWorkout);
   $("btn-add-cardio").addEventListener("click", openCardioSheet);

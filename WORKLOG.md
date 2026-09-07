@@ -341,3 +341,28 @@ Deploy once at the end: bump CACHE (sw.js) + APP_VERSION (main.js).
   - Zero console errors on a clean boot in a fresh tab.
 - Test-env note (again): the browser served a stale `fakedb.js` after the edits and produced a ghost `db.listenSessions is not a function`. Fixed by refetching every asset with `cache: "reload"`. Unregistering the SW is not enough; the HTTP cache also has to be busted.
 - Pending: deploy ritual (bump sw.js CACHE + main.js APP_VERSION to v6.5, commit) awaiting Pedro's go. Open item: the backfill fires against real Firestore on Pedro's next load and marks EVERY day logged on 2026-09-05; correct if he trained once that day.
+
+## 2026-09-07 — v6.6/v6.7: workflow do treino + cards enxutos + Exercícios UI
+
+### Request (Pedro)
+1. Cardio antes do Finalizar, idealmente no começo do treino (é ad-hoc, decidido no dia — já é standalone, só muda posição).
+2. Cards da aba Treino menores: sem histórico visível; só séries, peso ref e nota (histórico só no sheet).
+3. Botão Iniciar/Finalizar treino, um só para ocupar menos espaço.
+4. Finalizar registra no histórico e marca concluído sem exigir todos os exercícios; drop da regra "todos completos = dia feito" (manter só "todas as séries = exercício feito").
+5. Aba Exercícios: nome na primeira linha, remover a string de últimas séries da lista (colisão de layout no iPhone).
+
+### Scope locked (AskUserQuestion, 1 rodada)
+- Cardio: topo, sempre visível (acima da lista de exercícios).
+- Botão único alternante (Iniciar → Finalizar → Finalizado ✓); iniciar não grava no Firestore (flag localStorage gym:workoutStart); finalizar grava a sessão (logs já são salvos ao vivo).
+- Histórico antigo 100% preservado: fallback "logs completos = dia feito" mantido para datas < 2026-09-08 (EXPLICIT_FINISH_CUTOFF); de lá em diante só sessão explícita conta.
+- Card: nome + séries + peso ref + nota. No editor de séries expandido, peso com MESMO tamanho de fonte, só cor de destaque.
+
+### Delegations
+- Brief A (Codex, background `codex exec`): cardio no topo, botão toggle com gym:workoutStart, cutoff em cycleDays, bump v6.6. Status: dispatched.
+- Brief B (Codex, serializado após A — mesmos arquivos): card sem linha "Último" (linha Ref: <kg>), fonte do peso no editor, limpeza das rows de Exercícios, bump extra. Status: written, pending A.
+
+### Resultados e review (2026-09-07)
+- Brief A entregue e verificado no browser (#debug, porta 8095 — 8093 caiu em faixa reservada do Windows, launch.json agora com autoPort): ordem Cardio → botão → cards ok; toggle Iniciar → Finalizar → Finalizado ✓ ok; flag gym:workoutStart persiste e limpa ao concluir; dia marcado ✓ com 0/7 exercícios; testes node do cutoff (antes conta por logs, depois só sessão explícita) passaram.
+- Brief B entregue: cards sem linha "Último" (lastLine/appendStyledSets removidos), linha "Ref: <kg>"; peso no editor de séries 14px/600 accent (igual às reps); rows de Exercícios sem item-side (CSS mantido — cardio history usa), Ref no sub-line. Review achou 1 bug: refWeightLabel dobrava o "kg" em valores free-text ("30 kgkg"); follow-up no mesmo thread corrigiu (regex numérica, como o antigo lastLine). Verificado no browser: "Ref: 30 kg", "Ref: 40–42,5 kg" corretos.
+- Edge case aberto (reportado ao Pedro): treino finalizado com ZERO exercícios registrados ganha o ✓ do ciclo mas não aparece em Histórico > Sessões (lista construída dos logs). Aguardando decisão.
+- Versão final: v6.7 (APP_VERSION + CACHE). Pendente: commit/push + deploy ritual no iPhone.

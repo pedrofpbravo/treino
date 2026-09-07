@@ -297,7 +297,7 @@ input, select { font: inherit; }
   flex: none;
 }
 .workout-card.done .wc-target { background: var(--card); }
-.wc-last {
+.wc-ref {
   display: block;
   font-size: 13px;
   color: var(--muted);
@@ -306,9 +306,6 @@ input, select { font: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.wc-last b { color: var(--ink); font-weight: 600; }
-.wc-last-weight { color: var(--ink); font-weight: 600; }
-.wc-last-reps { color: var(--muted); }
 .wc-note {
   display: block;
   font-size: 12px;
@@ -362,7 +359,7 @@ input, select { font: inherit; }
   font-weight: 700;
 }
 .set-row input:focus { outline: 2px solid var(--ink); border-color: transparent; }
-.set-row .set-weight input { font-size: 17px; font-weight: 800; color: var(--ink); }
+.set-row .set-weight input { font-size: 14px; font-weight: 600; color: var(--accent-ink); }
 .set-row .set-reps input { font-size: 14px; font-weight: 600; color: var(--muted); }
 .set-remove {
   width: 34px; height: 34px;
