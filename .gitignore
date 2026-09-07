@@ -1,0 +1,7 @@
+# Session working files: delegation briefs, Codex run logs (megabytes), patches.
+# Nothing here ships with the app.
+scratchpad/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
