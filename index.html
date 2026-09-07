@@ -81,11 +81,11 @@
           <button class="timer-preset" data-secs="120" type="button">120s</button>
         </div>
 
-        <div class="cardio-today">
+        <div class="session-row">
           <button id="btn-add-cardio" class="btn small cardio-add-btn" type="button">＋ Cardio</button>
-          <ul id="today-cardio-list" class="today-cardio-list"></ul>
+          <button id="btn-finish-workout" class="btn primary finish-btn" type="button" hidden>Iniciar treino</button>
         </div>
-        <button id="btn-finish-workout" class="btn primary finish-btn" type="button" hidden>Iniciar treino</button>
+        <ul id="today-cardio-list" class="today-cardio-list"></ul>
         <div id="workout-list" class="workout-list"></div>
         <p id="workout-empty" class="empty" hidden>Nenhum exercício neste dia. Toque em ✎ Editar dia para adicionar.</p>
         <p id="workout-noday" class="empty" hidden>Crie um dia para este programa.</p>
@@ -377,6 +377,7 @@
     <h3>Resumo do treino</h3>
     <p id="finish-sub" class="hint"></p>
     <ul id="finish-list" class="rows"></ul>
+    <p id="finish-min-hint" class="hint" hidden>Conclua pelo menos 1 exercício para registrar o treino.</p>
     <div class="sheet-actions">
       <button type="button" id="btn-finish-reopen" class="btn ghost" hidden>Reabrir treino</button>
       <span class="spacer"></span>

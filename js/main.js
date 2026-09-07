@@ -40,7 +40,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v6.7";
+const APP_VERSION = "v6.8";
 
 const $ = (id) => document.getElementById(id);
 
@@ -352,6 +352,7 @@ function renderWorkout() {
   finishBtn.textContent = isFinished
     ? "Treino finalizado ✓"
     : isStarted ? "Finalizar treino" : "Iniciar treino";
+  finishBtn.classList.toggle("active", isStarted && !isFinished);
   finishBtn.classList.toggle("completed", isFinished);
   makeDraggableList(listEl);
 }
@@ -769,7 +770,10 @@ function openFinishSheet() {
     ul.appendChild(li);
   });
 
-  $("btn-finish-confirm").hidden = !!session;
+  const confirmBtn = $("btn-finish-confirm");
+  confirmBtn.hidden = !!session;
+  confirmBtn.disabled = done === 0;
+  $("finish-min-hint").hidden = done > 0 || !!session;
   $("btn-finish-reopen").hidden = !session;
 
   openSheet("sheet-finish");

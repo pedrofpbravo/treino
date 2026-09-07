@@ -97,8 +97,8 @@ export function logDone(log) {
 export const EXPLICIT_FINISH_CUTOFF = "2026-09-08";
 
 // Days trained since the most recently completed program cycle. A session is
-// complete when explicitly finished. Before the cutoff, complete logs also
-// count so pre-Iniciar/Finalizar history keeps working.
+// complete when explicitly finished. Before the cutoff, at least one completed
+// exercise also counts so pre-Iniciar/Finalizar history keeps working.
 export function cycleDays(logs, programId, days, finished = []) {
   const programDays = (days || []).filter((day) => day.programId === programId);
   const validDays = new Set(programDays.map((day) => day.id));
@@ -137,11 +137,7 @@ export function cycleDays(logs, programId, days, finished = []) {
     .filter((session) => {
       if (finishedKeys.has(`${session.date}|${session.dayId}`)) return true;
       if (session.date >= EXPLICIT_FINISH_CUTOFF) return false;
-      const day = programDays.find((item) => item.id === session.dayId);
-      const entries = Array.isArray(day?.entries) ? day.entries : [];
-      return entries.length > 0 && entries.every((entry) =>
-        session.logs.some((log) => log.exerciseId === entry.exerciseId && logDone(log))
-      );
+      return session.logs.some(logDone);
     })
     .sort((a, b) =>
       a.date.localeCompare(b.date) || a.stamp - b.stamp || a.dayId.localeCompare(b.dayId)

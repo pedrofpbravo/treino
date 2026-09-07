@@ -366,3 +366,16 @@ Deploy once at the end: bump CACHE (sw.js) + APP_VERSION (main.js).
 - Brief B entregue: cards sem linha "Último" (lastLine/appendStyledSets removidos), linha "Ref: <kg>"; peso no editor de séries 14px/600 accent (igual às reps); rows de Exercícios sem item-side (CSS mantido — cardio history usa), Ref no sub-line. Review achou 1 bug: refWeightLabel dobrava o "kg" em valores free-text ("30 kgkg"); follow-up no mesmo thread corrigiu (regex numérica, como o antigo lastLine). Verificado no browser: "Ref: 30 kg", "Ref: 40–42,5 kg" corretos.
 - Edge case aberto (reportado ao Pedro): treino finalizado com ZERO exercícios registrados ganha o ✓ do ciclo mas não aparece em Histórico > Sessões (lista construída dos logs). Aguardando decisão.
 - Versão final: v6.7 (APP_VERSION + CACHE). Pendente: commit/push + deploy ritual no iPhone.
+
+## 2026-09-07 — v6.8: session-row + regra "1 exercício concluído"
+
+### Request (Pedro)
+UI do Iniciar/Finalizar estava feia (pillão preto colado nos cards); mais respiro; reset do ciclo quando todos os dias completam (já existia); Push/Pull/Legs/Lower desta semana deveriam ter ✓ (Histórico tem os logs); não registrar treino com 0 exercícios.
+
+### Scope locked (AskUserQuestion, 1 rodada)
+- Layout: uma linha ＋Cardio (compacto) + botão Iniciar/Finalizar (flex 1), 16px antes dos cards; "Finalizar" em contorno accent (classe .active), "Finalizado ✓" mantém .completed.
+- Mínimo para contar/registrar dia: 1 exercício com TODAS as séries checadas (logDone). Vale para o fallback pré-cutoff (dá os ✓ da semana sem escrever dados) e trava o "Concluir treino" (disabled + hint) com 0 concluídos.
+
+### Execução
+- Brief C (Codex): session-row no index.html + CSS, .active/.completed no renderWorkout, cycleDays fallback pré-cutoff = ≥1 logDone (reset do ciclo intacto, testes node passaram: 1/3 done conta, none-done não, pós-cutoff só sessão, all-trained reseta), finish-min-hint + confirm disabled, bump v6.8.
+- Review: alturas desiguais na linha (49px vs 37px) → follow-up no mesmo thread, botão agora padding 8px/14px font 14px. Verificado no browser: mesma linha, mesma altura, gap 16px, guard do Concluir funcionando, chips ✓ pelo novo fallback.

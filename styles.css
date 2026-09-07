@@ -116,7 +116,7 @@ input, select { font: inherit; }
   font-weight: 700;
 }
 .btn.primary { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); width: 100%; }
-.btn.primary:disabled { opacity: 0.45; }
+.btn:disabled { opacity: 0.45; pointer-events: none; }
 .btn.ghost { background: transparent; }
 .btn.danger { color: var(--danger); }
 .btn.small { padding: 8px 14px; font-size: 14px; width: auto; }
@@ -370,14 +370,26 @@ input, select { font: inherit; }
 }
 .btn-add-set { font-size: 14px; font-weight: 800; color: var(--accent-ink); padding: 4px 2px; }
 
-.finish-btn { margin-top: 14px; }
+.session-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0 16px;
+}
+.session-row #btn-add-cardio { flex: none; }
+.session-row #btn-finish-workout { flex: 1; width: auto; padding: 8px 14px; font-size: 14px; }
+.finish-btn.active {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
 .finish-btn.completed { background: transparent; color: var(--ink); border-color: var(--line); }
 
-.cardio-today { margin-top: 12px; }
 .cardio-add-btn { border-color: var(--accent); color: var(--accent-ink); }
 .today-cardio-list {
   list-style: none;
-  margin: 8px 0 0;
+  margin: 0;
   padding: 0;
   background: var(--card);
   border: 1px solid var(--line);
