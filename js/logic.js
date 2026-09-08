@@ -181,15 +181,40 @@ export function parseRefWeight(refWeight) {
   return m ? Number(m[0]) : null;
 }
 
-// Sets to pre-fill when an exercise is checked: values from the last session,
-// else the day entry's target reps at the reference weight. New sets are pending.
-export function prefillSets(lastLog, entry, refWeightNum = null) {
-  if (lastLog && Array.isArray(lastLog.sets) && lastLog.sets.length > 0) {
-    return cloneSets(lastLog.sets).map((s) => ({ ...s, done: false }));
-  }
+// Sets to pre-fill when an exercise is started: always the day entry's target
+// (targetSets rows of the target reps) at the reference weight. The last
+// session never changes the prefill; it lives only in the history.
+export function prefillSets(entry, refWeightNum = null) {
   const n = Math.max(1, Number(entry?.targetSets) || 3);
   const reps = entryReps(entry);
   return Array.from({ length: n }, () => ({ reps, weight: refWeightNum, done: false }));
+}
+
+// Draft sets are the local working copy of a workout in progress (they only
+// become logs on "Finalizar treino"). A set is recorded only when checked.
+export function draftSetDone(set) {
+  return set?.done === true;
+}
+
+export function draftAllDone(sets) {
+  return Array.isArray(sets) && sets.length > 0 && sets.every(draftSetDone);
+}
+
+// The sets that "Finalizar treino" writes to the history: checked sets only.
+export function recordedSets(sets) {
+  return (Array.isArray(sets) ? sets : [])
+    .filter(draftSetDone)
+    .map((s) => ({
+      reps: Number.isFinite(Number(s.reps)) ? Number(s.reps) : null,
+      weight: s.weight === null || s.weight === undefined || s.weight === "" ? null : Number(s.weight),
+      done: true,
+    }));
+}
+
+// Seed a draft from an already-saved log (e.g. the day was finished, reopened
+// and storage was cleared): keeps values and done flags (missing = done).
+export function draftFromLog(log) {
+  return cloneSets(log?.sets);
 }
 
 // "3×12": always a single rep number.

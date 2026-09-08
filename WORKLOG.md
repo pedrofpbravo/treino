@@ -2,6 +2,59 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
+## 2026-09-07 — v7.1: rascunho local até finalizar + prefill pela referência
+
+### Request (Pedro)
+Quatro ajustes: (1) número de séries do prefill não bate com a referência do
+dia (vinha da última sessão); (2) nada deve ir ao Histórico ao expandir/
+colapsar um card, só no "Finalizar treino"; (3) colapsar sem marcar séries não
+pode marcar o exercício como concluído (cor/destaque só com todas as séries);
+(4) a aba Exercícios quebra o layout ao filtrar um grupo (barra sobe).
+
+### Execução
+Feita direto pelo Fable, sem delegação (pedido explícito do Pedro: "use o
+fable de ponta a ponta, nao ha necessidade de orquestrar e delegar"). O hook
+block-shipped-edits bloqueou as edições; Pedro o removeu e depois o recriou
+como no-op para a sessão (o classificador de permissões impediu o Fable de
+tocar no sistema de hooks). Restaurar o guard-rail original ao final.
+
+### Scope locked (Pedro's answers, uma rodada AskUserQuestion)
+- Rascunho órfão (dia anterior, nunca finalizado): descartar sem rastro.
+- "Finalizar treino" grava só as séries marcadas; exercício com 0 séries
+  marcadas não entra no Histórico.
+- Prefill: ref pura (targetSets × reps do dia, no peso de referência do
+  exercício); nada vem da última sessão.
+
+### Mudanças
+- `js/logic.js`: `prefillSets(entry, refWeightNum)` (sem lastLog); novos
+  helpers `draftSetDone`, `draftAllDone`, `recordedSets` (só séries done),
+  `draftFromLog` (semear rascunho de log salvo, done ausente = true).
+- `js/main.js`: store de rascunhos `gym:drafts` em localStorage
+  (`{"date|dayId": {exerciseId: sets[]}}`), `pruneDrafts` descarta datas
+  antigas em todo renderTreino; card renderiza do rascunho (done = todas as
+  séries ✓, in-progress = ≥1 ✓, aberto sem ✓ = idle); toque cria rascunho
+  local (semeado do log de hoje se existir, senão prefill), zero writes;
+  editor de séries muta o rascunho; `openFinishSheet`/`confirmFinishWorkout`
+  gravam logs (só séries marcadas) + sessão no finalizar, fire-and-forget
+  (offline ok); chip do dia "doing" também via rascunho; scroll reset ao
+  filtrar grupo em Exercícios; APP_VERSION v7.1.
+- `sw.js`: CACHE treino-v7.1.
+
+### Verificação (browser #debug, SW desregistrado, viewport mobile)
+- Toque no card: rascunho 3×10 a 30kg (alvo do dia), 0 logs, card idle,
+  badge "0/3 séries", contador "0/7 feitos hoje".
+- Colapso sem séries: classe só "collapsed", 0 logs.
+- 1 série ✓: in-progress + timer 1:30; todas ✓: done + autocolapso + "✓ feito".
+- Reload: rascunho persiste com os três estados.
+- Finalizar: grava só 2 logs (completo 3 séries; parcial só a série marcada),
+  exercício aberto sem ✓ fica de fora; sessão sess-2026-09-07-day-ppl-ul-push;
+  cards mantêm estado; re-finalizar após reabrir sobrescreve (ids
+  determinísticos), sem duplicata no Histórico.
+- Rascunho de ontem plantado + reload: descartado no boot.
+- Exercícios: scroll 800→0 ao filtrar "Trapézio", chip "on", conteúdo curto
+  sem clamp; helpers puros validados (draftFromLog/recordedSets/prefillSets).
+- Zero erros no console. Não commitado/deployado ainda.
+
 ## 2026-09-04 — v6.4: histórico completo por exercício
 
 ### Request (Pedro)

@@ -17,9 +17,11 @@ import {
   fmtDateFull,
   addDaysStr,
   logDocId,
-  lastLogFor,
   prefillSets,
-  logDone,
+  draftSetDone,
+  draftAllDone,
+  recordedSets,
+  draftFromLog,
   cycleProgress,
   entryReps,
   normalizeDecimalInput,
@@ -42,7 +44,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.0";
+const APP_VERSION = "v7.1";
 
 const $ = (id) => document.getElementById(id);
 
@@ -57,6 +59,54 @@ try {
 
 function saveCollapsedCards() {
   localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedCards]));
+}
+
+// ---------- workout drafts ----------
+// A workout in progress lives ONLY here (localStorage) until "Finalizar
+// treino" writes it to Firestore: expanding/collapsing cards and checking
+// sets never touch the history. Shape: { "date|dayId": { exerciseId: sets[] } }.
+// Drafts from previous dates are pruned: an unfinished workout is discarded.
+
+const DRAFTS_KEY = "gym:drafts";
+let drafts = {};
+try {
+  const stored = JSON.parse(localStorage.getItem(DRAFTS_KEY) || "{}");
+  if (stored && typeof stored === "object" && !Array.isArray(stored)) drafts = stored;
+} catch {
+  drafts = {};
+}
+
+function saveDrafts() {
+  localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+function pruneDrafts(today) {
+  let changed = false;
+  Object.keys(drafts).forEach((key) => {
+    if (key.startsWith(`${today}|`)) return;
+    delete drafts[key];
+    changed = true;
+  });
+  if (changed) saveDrafts();
+}
+
+const draftKeyOf = (date, dayId) => `${date}|${dayId}`;
+
+function draftSetsFor(date, dayId, exerciseId) {
+  const sets = drafts[draftKeyOf(date, dayId)]?.[exerciseId];
+  return Array.isArray(sets) ? sets : null;
+}
+
+function setDraftSets(date, dayId, exerciseId, sets) {
+  const key = draftKeyOf(date, dayId);
+  if (!drafts[key]) drafts[key] = {};
+  drafts[key][exerciseId] = sets;
+  saveDrafts();
+}
+
+function dayDraftStarted(date, dayId) {
+  const day = drafts[draftKeyOf(date, dayId)];
+  return !!day && Object.values(day).some((sets) => Array.isArray(sets) && sets.length > 0);
 }
 
 function workoutStarted(date, dayId) {
@@ -188,6 +238,7 @@ function renderTreino() {
   selectDefaults();
   const today = todayStr();
   state.lastTreinoRenderDate = today;
+  pruneDrafts(today);
 
   const select = $("program-select");
   select.innerHTML = "";
@@ -206,7 +257,9 @@ function renderTreino() {
   days.forEach((day) => {
     const chip = document.createElement("button");
     chip.type = "button";
-    const inProgress = !trainedDays.has(day.id) && workoutStarted(today, day.id);
+    const inProgress =
+      !trainedDays.has(day.id) &&
+      (workoutStarted(today, day.id) || dayDraftStarted(today, day.id));
     chip.className = "chip" + (day.id === state.dayId ? " on" : "") + (inProgress ? " doing" : "");
     chip.textContent = trainedDays.has(day.id) ? `✓ ${day.name}` : day.name;
     chip.addEventListener("click", () => {
@@ -388,9 +441,8 @@ function renderWorkout() {
 
   let done = 0;
   entries.forEach((entry) => {
-    const logId = logDocId({ date: today, dayId: day.id, exerciseId: entry.exerciseId });
-    if (logDone(state.logsById.get(logId))) done++;
-    listEl.appendChild(buildWorkoutCard(entry, day, logId));
+    if (draftAllDone(draftSetsFor(today, day.id, entry.exerciseId))) done++;
+    listEl.appendChild(buildWorkoutCard(entry, day));
   });
   $("day-progress").textContent =
     entries.length > 0 ? `${done}/${entries.length} feitos hoje` : "";
@@ -398,7 +450,7 @@ function renderWorkout() {
     log.date === today && log.programId === day.programId && log.dayId === day.id
   );
   const isFinished = !!finishedSession(today, day.id);
-  const isStarted = startedByTap || hasLogs;
+  const isStarted = startedByTap || dayDraftStarted(today, day.id) || hasLogs;
   finishBtn.textContent = isFinished
     ? "Treino finalizado ✓"
     : isStarted ? "Finalizar treino" : "Iniciar treino";
@@ -518,16 +570,22 @@ function makeDraggableList(list) {
 
 // Compact card, uniform height: name + target, reference line, one-line
 // note. The card body toggles its sets; the gear opens the detail sheet.
-function buildWorkoutCard(entry, day, logId) {
+// The card renders from the local draft, never from saved logs: "done"
+// (peach fill) needs every set checked, the in-progress accent edge needs
+// at least one; a merely opened card looks idle.
+function buildWorkoutCard(entry, day) {
   const ex = state.exercisesById.get(entry.exerciseId);
-  const log = state.logsById.get(logId);
-  const isDone = logDone(log);
-  const program = currentProgram();
+  const today = todayStr();
+  const sets = draftSetsFor(today, day.id, entry.exerciseId);
+  const started = !!sets;
+  const doneCount = started ? sets.filter(draftSetDone).length : 0;
+  const isDone = started && draftAllDone(sets);
+  const inProgress = started && doneCount > 0 && !isDone;
   const collapsedKey = `${day.id}|${entry.exerciseId}`;
-  const isCollapsed = !!log && collapsedCards.has(collapsedKey);
+  const isCollapsed = started && collapsedCards.has(collapsedKey);
 
   const card = document.createElement("div");
-  card.className = "workout-card" + (isDone ? " done" : log ? " in-progress" : "") + (isCollapsed ? " collapsed" : "");
+  card.className = "workout-card" + (isDone ? " done" : inProgress ? " in-progress" : "") + (isCollapsed ? " collapsed" : "");
   card.dataset.exerciseId = entry.exerciseId;
   card.setAttribute("aria-expanded", String(!isCollapsed));
 
@@ -562,16 +620,10 @@ function buildWorkoutCard(entry, day, logId) {
   refText.textContent = refWeight ? `Ref: ${refWeight}` : "";
   if (!refWeight) refText.innerHTML = "&nbsp;";
   ref.appendChild(refText);
-  if (log) {
+  if (started) {
     const status = document.createElement("span");
     status.className = "wc-status";
-    if (isDone) {
-      status.textContent = "✓ feito";
-    } else {
-      const sets = Array.isArray(log.sets) ? log.sets : [];
-      const completed = sets.filter((set) => set.done !== false).length;
-      status.textContent = `${completed}/${sets.length} séries`;
-    }
+    status.textContent = isDone ? "✓ feito" : `${doneCount}/${sets.length} séries`;
     ref.appendChild(status);
   }
   main.appendChild(ref);
@@ -610,20 +662,19 @@ function buildWorkoutCard(entry, day, logId) {
     if (state.reorderMode) return;
     if (card.dataset.suppressClick) return;
     if (e.target.closest(".sets-editor, .wc-gear")) return;
-    if (!log) {
+    if (!started) {
       if (collapsedCards.delete(collapsedKey)) saveCollapsedCards();
       clearFinishedTimer();
-      const last = lastLogFor(state.logs, entry.exerciseId, todayStr());
-      db.saveLog({
-        date: todayStr(),
-        programId: program?.id || day.programId,
-        dayId: day.id,
-        exerciseId: entry.exerciseId,
-        exerciseName: ex?.name || entry.exerciseId,
-        dayName: day.name,
-        programName: program?.name || "",
-        sets: prefillSets(last, entry, parseRefWeight(ex?.refWeight)),
-      }).catch(() => toast("Erro ao salvar."));
+      // Local draft only, no Firestore write. Seed from today's already-saved
+      // log when there is one (finished + reopened day), else from the target.
+      const savedLog = state.logsById.get(
+        logDocId({ date: today, dayId: day.id, exerciseId: entry.exerciseId })
+      );
+      const seed = savedLog && Array.isArray(savedLog.sets) && savedLog.sets.length > 0
+        ? draftFromLog(savedLog)
+        : prefillSets(entry, parseRefWeight(ex?.refWeight));
+      setDraftSets(today, day.id, entry.exerciseId, seed);
+      renderTreino();
       return;
     }
 
@@ -634,7 +685,7 @@ function buildWorkoutCard(entry, day, logId) {
     saveCollapsedCards();
   });
 
-  if (log) card.appendChild(buildSetsEditor(entry, day, log));
+  if (started) card.appendChild(buildSetsEditor(entry, day, sets));
   return card;
 }
 
@@ -794,14 +845,26 @@ function renderExerciseLog() {
 
 // ---------- finish workout (summary of today's session) ----------
 
+// The summary previews exactly what "Concluir treino" will record: the
+// checked sets of each started exercise. An exercise with no checked set is
+// not listed and will not be written to the history.
 function openFinishSheet() {
   const day = currentDay();
   if (!day) return;
   const today = todayStr();
-  const logs = (day.entries || [])
-    .map((en) => state.logsById.get(logDocId({ date: today, dayId: day.id, exerciseId: en.exerciseId })))
+  const items = (day.entries || [])
+    .map((en) => {
+      const sets = draftSetsFor(today, day.id, en.exerciseId);
+      const recorded = recordedSets(sets);
+      if (recorded.length === 0) return null;
+      return {
+        name: state.exercisesById.get(en.exerciseId)?.name || en.exerciseId,
+        recorded,
+        complete: draftAllDone(sets),
+      };
+    })
     .filter(Boolean);
-  const done = logs.filter(logDone).length;
+  const done = items.filter((item) => item.complete).length;
   const session = finishedSession(today, day.id);
 
   $("finish-sub").textContent =
@@ -809,16 +872,16 @@ function openFinishSheet() {
 
   const ul = $("finish-list");
   ul.innerHTML = "";
-  logs.forEach((log) => {
+  items.forEach((item) => {
     const li = document.createElement("li");
     li.className = "row-line";
     const name = document.createElement("span");
     name.className = "row-name";
-    name.textContent = log.exerciseName;
+    name.textContent = item.name;
     const sub = document.createElement("span");
     sub.className = "row-sub";
-    sub.textContent = setsLabel(log.sets) || "feito";
-    if (!logDone(log)) {
+    sub.textContent = setsLabel(item.recorded) || "feito";
+    if (!item.complete) {
       const flag = document.createElement("span");
       flag.className = "exlog-set-pending";
       flag.textContent = "incompleto";
@@ -844,7 +907,8 @@ function toggleWorkout() {
   const hasLogs = state.logs.some((log) =>
     log.date === today && log.programId === day.programId && log.dayId === day.id
   );
-  if (!finishedSession(today, day.id) && !hasLogs && !workoutStarted(today, day.id)) {
+  const started = dayDraftStarted(today, day.id) || hasLogs || workoutStarted(today, day.id);
+  if (!finishedSession(today, day.id) && !started) {
     localStorage.setItem("gym:workoutStart", `${today}|${day.id}`);
     renderWorkout();
     return;
@@ -857,6 +921,28 @@ function confirmFinishWorkout() {
   if (!day) return;
   const program = currentProgram();
   const today = todayStr();
+
+  // This is the only moment a workout reaches the history: one log per
+  // exercise with at least one checked set, holding the checked sets only.
+  // Deterministic ids make re-finishing after a reopen an overwrite, not a
+  // duplicate. Fire-and-forget like every other write: the local cache
+  // applies them immediately and syncs later, so finishing works offline.
+  (day.entries || []).forEach((entry) => {
+    const recorded = recordedSets(draftSetsFor(today, day.id, entry.exerciseId));
+    if (recorded.length === 0) return;
+    const ex = state.exercisesById.get(entry.exerciseId);
+    db.saveLog({
+      date: today,
+      programId: program?.id || day.programId,
+      dayId: day.id,
+      exerciseId: entry.exerciseId,
+      exerciseName: ex?.name || entry.exerciseId,
+      dayName: day.name,
+      programName: program?.name || "",
+      sets: recorded,
+    }).catch(() => toast("Erro ao salvar exercícios do treino."));
+  });
+
   const pendingSessionId = sessionId(today, day.id);
   pendingFinishToastId = pendingSessionId;
   db.finishSession({
@@ -884,22 +970,22 @@ function unfinishWorkout() {
   closeSheets();
 }
 
-// The sets editor lives inside a card with a log. Every change re-saves the
-// same log doc (deterministic id), so editing stays a single write.
-function buildSetsEditor(entry, day, log) {
+// The sets editor lives inside a started card and mutates the local draft in
+// place; nothing is written to Firestore until "Finalizar treino".
+function buildSetsEditor(entry, day, sets) {
   const wrap = document.createElement("div");
   wrap.className = "sets-editor";
-  const sets = (log.sets || []).map((s) => ({ ...s, done: s.done !== false }));
   const collapsedKey = `${day.id}|${entry.exerciseId}`;
 
   const syncCollapsedState = () => {
-    if (sets.length > 0 && sets.every((set) => set.done)) collapsedCards.add(collapsedKey);
+    if (draftAllDone(sets)) collapsedCards.add(collapsedKey);
     else collapsedCards.delete(collapsedKey);
     saveCollapsedCards();
   };
 
   const save = () => {
-    db.saveLog({ ...log, sets }).catch(() => toast("Erro ao salvar."));
+    saveDrafts();
+    renderTreino();
   };
 
   sets.forEach((set, idx) => {
@@ -1195,6 +1281,9 @@ function renderMuscleChips() {
       else state.muscleFilters.add(m.id);
       renderMuscleChips();
       renderExercises();
+      // Filtering can shrink the list below the current scroll offset; the
+      // abrupt clamp reads as a broken layout. Deterministic: back to the top.
+      window.scrollTo(0, 0);
     });
     wrap.appendChild(chip);
   });
