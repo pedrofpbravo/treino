@@ -181,6 +181,23 @@
         </div>
       </section>
 
+      <!-- SÉRIES -->
+      <section id="tab-series" class="tab" hidden>
+        <header class="tab-header">
+          <h2>Séries</h2>
+          <div class="series-week-nav" aria-label="Navegação por semana">
+            <button id="series-prev" class="series-week-btn" type="button" aria-label="Semana anterior">‹</button>
+            <span id="series-week-label" class="series-week-label"></span>
+            <button id="series-next" class="series-week-btn" type="button" aria-label="Próxima semana">›</button>
+          </div>
+        </header>
+
+        <div id="series-card" class="card">
+          <ul id="series-list" class="rows series-rows"></ul>
+        </div>
+        <p id="series-empty" class="empty" hidden>Nenhuma série registrada nesta semana.</p>
+      </section>
+
       <!-- AJUSTES -->
       <section id="tab-ajustes" class="tab" hidden>
         <header class="tab-header"><h2>Ajustes</h2></header>
@@ -241,6 +258,9 @@
       </button>
       <button class="tabbtn" data-tab="historico">
         <span class="tab-ico">📈</span>Histórico
+      </button>
+      <button class="tabbtn" data-tab="series">
+        <span class="tab-ico">🔢</span>Séries
       </button>
       <button class="tabbtn" data-tab="ajustes">
         <span class="tab-ico">⚙</span>Ajustes
@@ -308,14 +328,6 @@
           <input id="ex-secondary" autocomplete="off" aria-autocomplete="list" aria-controls="ex-secondary-list" aria-expanded="false">
           <div id="ex-secondary-list" class="muscle-options" role="listbox" hidden></div>
           <div id="ex-secondary-tags" class="muscle-tags"></div>
-        </div>
-      </div>
-      <div class="field">
-        <label for="ex-others">Outros</label>
-        <div class="muscle-combobox">
-          <input id="ex-others" autocomplete="off" aria-autocomplete="list" aria-controls="ex-others-list" aria-expanded="false">
-          <div id="ex-others-list" class="muscle-options" role="listbox" hidden></div>
-          <div id="ex-others-tags" class="muscle-tags"></div>
         </div>
       </div>
       <label class="field">

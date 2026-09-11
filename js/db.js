@@ -23,6 +23,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   writeBatch,
   serverTimestamp,
 } from "./vendor/firebase-firestore.js";
@@ -112,7 +113,6 @@ export function seedExercises() {
       nameLower: normalize(ex.name),
       primaryMuscleId: `mus-${ex.primary}`,
       secondaryMuscleIds: ex.secondary.map((k) => `mus-${k}`),
-      otherMuscleIds: ex.others.map((k) => `mus-${k}`),
       refWeight: ex.refWeight || "",
       note: ex.note || "",
       createdAt: serverTimestamp(),
@@ -202,12 +202,11 @@ export function deleteCardioType(id) {
 
 // ---------- exercises ----------
 
-const exerciseData = ({ name, primaryMuscleId, secondaryMuscleIds, otherMuscleIds, refWeight, note }) => ({
+const exerciseData = ({ name, primaryMuscleId, secondaryMuscleIds, refWeight, note }) => ({
   name,
   nameLower: normalize(name),
   primaryMuscleId,
   secondaryMuscleIds: secondaryMuscleIds || [],
-  otherMuscleIds: otherMuscleIds || [],
   refWeight: refWeight || "",
   note: note || "",
   updatedAt: serverTimestamp(),
@@ -229,6 +228,19 @@ export function createExerciseWithId(id, data) {
 
 export function updateExercise(id, data) {
   return updateDoc(doc(fs, "exercises", id), exerciseData(data));
+}
+
+export function updateExerciseMuscles(corrections) {
+  const batch = writeBatch(fs);
+  corrections.forEach(({ id, primaryMuscleId, secondaryMuscleIds }) => {
+    batch.update(doc(fs, "exercises", id), {
+      primaryMuscleId,
+      secondaryMuscleIds,
+      otherMuscleIds: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+  return batch.commit();
 }
 
 // One batch: remove the exercise from every day that references it, then
@@ -389,7 +401,6 @@ export async function importBackup(data) {
       nameLower: normalize(e.name),
       primaryMuscleId: e.primaryMuscleId || null,
       secondaryMuscleIds: e.secondaryMuscleIds || [],
-      otherMuscleIds: e.otherMuscleIds || [],
       refWeight: e.refWeight || "",
       note: e.note || "",
       createdAt: serverTimestamp(),

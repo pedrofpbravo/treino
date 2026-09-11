@@ -16,6 +16,7 @@ import {
   fmtDateShortMonth,
   fmtDateFull,
   addDaysStr,
+  weekStartStr,
   logDocId,
   prefillSets,
   draftSetDone,
@@ -34,6 +35,7 @@ import {
   exercisesFromLogs,
   exerciseHistory,
   weeklyFrequency,
+  weeklyMuscleSets,
   weeklyCardio,
   dailyCardio,
   monthlyCardio,
@@ -44,7 +46,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.1";
+const APP_VERSION = "v7.2";
 
 const $ = (id) => document.getElementById(id);
 
@@ -140,6 +142,8 @@ const state = {
   muscleFilters: new Set(),
   histView: "sessoes",
   cardioChartView: "week",
+  seriesWeekOffset: 0,
+  seriesOpenMuscleId: null,
   progExerciseId: null,
   editingExerciseId: null,
   editingDayId: null,
@@ -149,7 +153,6 @@ const state = {
   draftEntries: [], // day sheet: [{exerciseId, targetSets, repMin, repMax}]
   draftPrimaryMuscleId: null,
   draftSecondary: new Set(), // exercise sheet muscle picks
-  draftOthers: new Set(),
   seededMuscles: false,
   seededExercises: false,
   seededPrograms: false,
@@ -185,9 +188,7 @@ function muscleName(id) {
 }
 
 function muscleSummary(ex) {
-  const extras = [...(ex.secondaryMuscleIds || []), ...(ex.otherMuscleIds || [])]
-    .map(muscleName)
-    .filter(Boolean);
+  const extras = (ex.secondaryMuscleIds || []).map(muscleName).filter(Boolean);
   const main = muscleName(ex.primaryMuscleId);
   if (!main) return extras.join(", ");
   return extras.length > 0 ? `${main} · ${extras.join(", ")}` : main;
@@ -727,7 +728,6 @@ function submitDetailForm(e) {
     name: ex.name,
     primaryMuscleId: ex.primaryMuscleId,
     secondaryMuscleIds: ex.secondaryMuscleIds || [],
-    otherMuscleIds: ex.otherMuscleIds || [],
     refWeight: numericRefWeight("det-refweight"),
     note: $("det-note").value.trim(),
   }).catch(() => toast("Erro ao salvar."));
@@ -1264,7 +1264,7 @@ function exerciseMatches(ex) {
   const q = normalize(state.search);
   if (q && !(ex.nameLower || normalize(ex.name)).includes(q)) return false;
   if (state.muscleFilters.size === 0) return true;
-  const ids = [ex.primaryMuscleId, ...(ex.secondaryMuscleIds || []), ...(ex.otherMuscleIds || [])];
+  const ids = [ex.primaryMuscleId, ...(ex.secondaryMuscleIds || [])];
   return ids.some((id) => state.muscleFilters.has(id));
 }
 
@@ -1330,9 +1330,7 @@ function renderExercises() {
       name.textContent = ex.name;
       main.appendChild(name);
       const subParts = [];
-      const extras = [...(ex.secondaryMuscleIds || []), ...(ex.otherMuscleIds || [])]
-        .map(muscleName)
-        .filter(Boolean);
+      const extras = (ex.secondaryMuscleIds || []).map(muscleName).filter(Boolean);
       if (extras.length > 0) subParts.push(extras.join(", "));
       const refWeight = refWeightLabel(ex.refWeight);
       if (refWeight) subParts.push(`Ref: ${refWeight}`);
@@ -1457,8 +1455,6 @@ function muscleCombobox({ inputEl, listEl, tagsEl, multi, getPicked, getExcluded
 function renderExerciseSheetGrids() {
   const primary = state.draftPrimaryMuscleId;
   state.draftSecondary.delete(primary);
-  state.draftOthers.delete(primary);
-  [...state.draftSecondary].forEach((id) => state.draftOthers.delete(id));
   Object.values(exerciseMuscleComboboxes).forEach((combobox) => combobox.render());
 }
 
@@ -1472,9 +1468,7 @@ function openExerciseSheet(exerciseId) {
   state.draftPrimaryMuscleId = ex?.primaryMuscleId || null;
   $("ex-primary").value = muscleName(state.draftPrimaryMuscleId);
   $("ex-secondary").value = "";
-  $("ex-others").value = "";
   state.draftSecondary = new Set(ex?.secondaryMuscleIds || []);
-  state.draftOthers = new Set(ex?.otherMuscleIds || []);
   renderExerciseSheetGrids();
 
   $("ex-refweight").value = ex?.refWeight || "";
@@ -1501,9 +1495,6 @@ function submitExerciseForm(e) {
     name,
     primaryMuscleId,
     secondaryMuscleIds: [...state.draftSecondary].filter((id) => id !== primaryMuscleId),
-    otherMuscleIds: [...state.draftOthers].filter(
-      (id) => id !== primaryMuscleId && !state.draftSecondary.has(id)
-    ),
     refWeight: numericRefWeight("ex-refweight"),
     note: $("ex-note").value.trim(),
   };
@@ -1611,6 +1602,79 @@ function makeSwipeable(row, onDelete) {
     content.style.transform = `translateX(${OPEN_X}px)`;
     row.classList.add("open");
     closeOpenSwipe = close;
+  });
+}
+
+// ---------- séries ----------
+
+function fmtSeriesNumber(value) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function renderSeries() {
+  if (!$("tab-series")) return;
+
+  const currentWeek = weekStartStr(todayStr());
+  const weekStart = addDaysStr(currentWeek, state.seriesWeekOffset * 7);
+  const weekEnd = addDaysStr(weekStart, 6);
+  $("series-week-label").textContent = `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}`;
+  $("series-next").disabled = state.seriesWeekOffset >= 0;
+
+  const rows = weeklyMuscleSets(state.logs, state.exercisesById, weekStart)
+    .filter((muscle) => muscle.total > 0)
+    .map((muscle) => ({ ...muscle, name: muscleName(muscle.muscleId) || muscle.muscleId }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "pt"));
+
+  const list = $("series-list");
+  list.innerHTML = "";
+  $("series-card").hidden = rows.length === 0;
+  $("series-empty").hidden = rows.length > 0;
+  if (!rows.some((muscle) => muscle.muscleId === state.seriesOpenMuscleId)) {
+    state.seriesOpenMuscleId = null;
+  }
+
+  rows.forEach((muscle, index) => {
+    const expanded = state.seriesOpenMuscleId === muscle.muscleId;
+    const breakdownId = `series-breakdown-${index}`;
+    const item = document.createElement("li");
+    item.className = "series-item";
+
+    const row = document.createElement("button");
+    row.className = "series-row";
+    row.type = "button";
+    row.setAttribute("aria-expanded", String(expanded));
+    row.setAttribute("aria-controls", breakdownId);
+    const name = document.createElement("span");
+    name.className = "series-muscle-name";
+    name.textContent = muscle.name;
+    const total = document.createElement("span");
+    total.className = "series-total";
+    total.textContent = fmtSeriesNumber(muscle.total);
+    row.append(name, total);
+    row.addEventListener("click", () => {
+      state.seriesOpenMuscleId = expanded ? null : muscle.muscleId;
+      renderSeries();
+    });
+
+    const breakdown = document.createElement("div");
+    breakdown.id = breakdownId;
+    breakdown.className = "series-breakdown";
+    breakdown.hidden = !expanded;
+    [...muscle.exercises]
+      .sort((a, b) => b.contribution - a.contribution || a.name.localeCompare(b.name, "pt"))
+      .forEach((exercise) => {
+        const detail = document.createElement("div");
+        detail.className = "series-breakdown-row";
+        const setLabel = exercise.sets === 1 ? "série" : "séries";
+        const contribution = fmtSeriesNumber(exercise.contribution);
+        detail.textContent = exercise.factor === 1
+          ? `${exercise.name} · ${exercise.sets} ${setLabel} · +${contribution}`
+          : `${exercise.name} · ${exercise.sets} ${setLabel} · ×0.5 = +${contribution}`;
+        breakdown.appendChild(detail);
+      });
+
+    item.append(row, breakdown);
+    list.appendChild(item);
   });
 }
 
@@ -1824,8 +1888,7 @@ function muscleInUse(muscleId) {
   return state.exercises.some(
     (ex) =>
       ex.primaryMuscleId === muscleId ||
-      (ex.secondaryMuscleIds || []).includes(muscleId) ||
-      (ex.otherMuscleIds || []).includes(muscleId)
+      (ex.secondaryMuscleIds || []).includes(muscleId)
   );
 }
 
@@ -1987,7 +2050,6 @@ function buildBackup() {
       name: e.name,
       primaryMuscleId: e.primaryMuscleId || null,
       secondaryMuscleIds: e.secondaryMuscleIds || [],
-      otherMuscleIds: e.otherMuscleIds || [],
       refWeight: e.refWeight || "",
       note: e.note || "",
       createdAt: iso(e.createdAt),
@@ -2154,12 +2216,49 @@ const NOTE_DASH_FIX_KEY = "gym:fix-note-dash-v6-3";
 const SMITH_SEED_KEY = "gym:seed-smith-v6";
 const CARDIO_BIKES_KEY = "gym:cardio-bikes-v6-1";
 const FINISH_BACKFILL_KEY = "gym:session-backfill-v6-5";
+const MUSCLE_REVIEW_KEY = "gym:muscle-review-v7-2";
 const FINISH_BACKFILL_DATES = ["2026-09-05"];
+const MUSCLE_REVIEW_CORRECTIONS = [
+  ["RaGL7etCaIjoUIA0tVje", "mus-panturrilha", []],
+  ["ex-abdominal_maquina", "mus-abdomen", []],
+  ["ex-abdutora_maquina", "mus-gluteos", []],
+  ["ex-agachamento-smith", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
+  ["ex-agachamento_bulgaro", "mus-quadriceps", ["mus-gluteos"]],
+  ["ex-agachamento_pendulo", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
+  ["ex-biceps_maquina", "mus-biceps", ["mus-antebraco"]],
+  ["ex-biceps_scott_unilateral_halter", "mus-biceps", ["mus-antebraco"]],
+  ["ex-cadeira_extensora", "mus-quadriceps", []],
+  ["ex-cadeira_flexora_bilateral", "mus-posterior", []],
+  ["ex-cadeira_flexora_unilateral", "mus-posterior", []],
+  ["ex-crucifixo_maquina", "mus-peito", ["mus-ombros"]],
+  ["ex-desenvolvimento_ombros_maquina", "mus-ombros", ["mus-triceps"]],
+  ["ex-elevacao_lateral_unilateral_polia", "mus-ombros", []],
+  ["ex-face_pull", "mus-ombros", ["mus-trapezio"]],
+  ["ex-hip_thrust", "mus-gluteos", ["mus-posterior"]],
+  ["ex-leg_press_45", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
+  ["ex-panturrilha_leg_press", "mus-panturrilha", []],
+  ["ex-panturrilha_smith", "mus-panturrilha", []],
+  ["ex-puxada_alta_maquina", "mus-costas", ["mus-biceps"]],
+  ["ex-rdl_stiff", "mus-posterior", ["mus-gluteos", "mus-lombar"]],
+  ["ex-remada_alta_articulada_maquina", "mus-costas", ["mus-biceps", "mus-trapezio", "mus-ombros"]],
+  ["ex-remada_fechada_unilateral_maquina", "mus-costas", ["mus-biceps"]],
+  ["ex-supino_inclinado_halteres", "mus-peito", ["mus-ombros", "mus-triceps"]],
+  ["ex-supino_maquina", "mus-peito", ["mus-triceps", "mus-ombros"]],
+  ["ex-triceps_frances_unilateral_halter", "mus-triceps", []],
+  ["ex-triceps_pushdown", "mus-triceps", []],
+  ["ex-triceps_testa_polia", "mus-triceps", []],
+  ["fLUBCdfEvnJrwimwXUfG", "mus-peito", ["mus-triceps"]],
+  ["faPCuEBTOUqy3pbFVlhd", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
+  ["qIWbCS3Tz8B249g7OMH5", "mus-triceps", []],
+  ["vfXcO0ys5my91L1gGg3c", "mus-ombros", []],
+  ["wUvgBaVruroejSdT6qJy", "mus-costas", ["mus-biceps"]],
+];
 let refWeightMigrationStarted = false;
 let noteDashFixStarted = false;
 let smithSeedStarted = false;
 let cardioBikesStarted = false;
 let finishBackfillStarted = false;
+let muscleReviewStarted = false;
 
 async function migrateRefWeights(exercises) {
   if (refWeightMigrationStarted || localStorage.getItem(REFWEIGHT_MIGRATION_KEY)) return;
@@ -2185,7 +2284,6 @@ async function migrateRefWeights(exercises) {
       name: ex.name,
       primaryMuscleId: ex.primaryMuscleId,
       secondaryMuscleIds: ex.secondaryMuscleIds || [],
-      otherMuscleIds: ex.otherMuscleIds || [],
       refWeight,
       note,
     }));
@@ -2216,7 +2314,6 @@ async function fixNoteDashes(exercises) {
       name: ex.name,
       primaryMuscleId: ex.primaryMuscleId,
       secondaryMuscleIds: ex.secondaryMuscleIds || [],
-      otherMuscleIds: ex.otherMuscleIds || [],
       refWeight: ex.refWeight,
       note,
     }));
@@ -2241,8 +2338,7 @@ async function seedSmithExercise(exercises) {
     await db.createExerciseWithId("ex-agachamento-smith", {
       name: "Agachamento smith",
       primaryMuscleId: "mus-quadriceps",
-      secondaryMuscleIds: ["mus-gluteos", "mus-posterior"],
-      otherMuscleIds: [],
+      secondaryMuscleIds: ["mus-gluteos", "mus-adutores"],
       refWeight: "",
       note: "",
     });
@@ -2300,6 +2396,27 @@ async function upsertCardioBikes(types) {
   }
 }
 
+async function applyMuscleReview() {
+  if (muscleReviewStarted || localStorage.getItem(MUSCLE_REVIEW_KEY)) return;
+  if (state.exercisesById.size === 0) return;
+  muscleReviewStarted = true;
+  const corrections = MUSCLE_REVIEW_CORRECTIONS
+    .filter(([id]) => state.exercisesById.has(id))
+    .map(([id, primaryMuscleId, secondaryMuscleIds]) => ({
+      id,
+      primaryMuscleId,
+      secondaryMuscleIds,
+    }));
+
+  try {
+    await db.updateExerciseMuscles(corrections);
+    localStorage.setItem(MUSCLE_REVIEW_KEY, "1");
+  } catch {
+    muscleReviewStarted = false;
+    toast("Erro ao atualizar músculos dos exercícios.");
+  }
+}
+
 // Sessions finished before v6.5 left no record: "Finalizar treino" used to
 // write nothing, so a day trained with one exercise left over never got its
 // check. Marks those days as finished from the logs they do have, so the id
@@ -2341,6 +2458,7 @@ function onMuscles(muscles) {
   renderMusclesManager();
   renderExercises();
   renderTreino();
+  renderSeries();
 }
 
 function onExercises(exercises) {
@@ -2354,8 +2472,10 @@ function onExercises(exercises) {
   migrateRefWeights(exercises);
   fixNoteDashes(exercises);
   seedSmithExercise(exercises);
+  applyMuscleReview();
   renderExercises();
   renderTreino();
+  renderSeries();
 }
 
 function onPrograms(programs) {
@@ -2382,6 +2502,7 @@ function onLogs(logs) {
   renderTreino();
   renderExercises();
   renderHist();
+  renderSeries();
   if (!$("sheet-exlog").hidden) renderExerciseLog();
 }
 
@@ -2460,6 +2581,7 @@ function switchTab(tab) {
   document.querySelectorAll(".tabbtn").forEach((b) =>
     b.classList.toggle("active", b.dataset.tab === tab)
   );
+  if (tab === "series") renderSeries();
   updateTimerVisibility();
   window.scrollTo(0, 0);
 }
@@ -2538,9 +2660,44 @@ function updateOnline() {
   $("offline-banner").hidden = navigator.onLine;
 }
 
+function wireVisualViewportBars() {
+  const viewport = window.visualViewport;
+  const isIOS =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  if (!viewport || !isIOS) return;
+
+  let frame = 0;
+  let settleTimer = 0;
+  const update = () => {
+    frame = 0;
+    const bottom = Math.max(
+      0,
+      document.documentElement.clientHeight - viewport.height - viewport.offsetTop
+    );
+    document.documentElement.style.setProperty("--visual-viewport-bottom", `${Math.round(bottom)}px`);
+  };
+  const queueUpdate = () => {
+    window.cancelAnimationFrame(frame);
+    window.clearTimeout(settleTimer);
+    frame = window.requestAnimationFrame(update);
+    settleTimer = window.setTimeout(update, 80);
+  };
+
+  viewport.addEventListener("resize", queueUpdate);
+  viewport.addEventListener("scroll", queueUpdate);
+  document.addEventListener("focusout", (e) => {
+    if (!e.target.matches("input, textarea, select")) return;
+    window.setTimeout(queueUpdate, 300);
+  });
+  queueUpdate();
+}
+
 // ---------- wiring ----------
 
 function wire() {
+  wireVisualViewportBars();
+
   // login
   $("login-form").addEventListener("submit", handleLogin);
 
@@ -2636,19 +2793,6 @@ function wire() {
       renderExerciseSheetGrids();
     },
   });
-  exerciseMuscleComboboxes.others = muscleCombobox({
-    inputEl: $("ex-others"),
-    listEl: $("ex-others-list"),
-    tagsEl: $("ex-others-tags"),
-    multi: true,
-    getPicked: () => state.draftOthers,
-    getExcluded: () => new Set([state.draftPrimaryMuscleId, ...state.draftSecondary]),
-    onPick: (id, picked) => {
-      if (picked) state.draftOthers.add(id);
-      else state.draftOthers.delete(id);
-      renderExerciseSheetGrids();
-    },
-  });
   $("btn-exercise-delete").addEventListener("click", deleteCurrentExercise);
 
   // histórico
@@ -2661,6 +2805,18 @@ function wire() {
   $("prog-exercise").addEventListener("change", (e) => {
     state.progExerciseId = e.target.value;
     renderProgress();
+  });
+
+  // séries
+  $("series-prev").addEventListener("click", () => {
+    state.seriesWeekOffset--;
+    state.seriesOpenMuscleId = null;
+    renderSeries();
+  });
+  $("series-next").addEventListener("click", () => {
+    state.seriesWeekOffset = Math.min(0, state.seriesWeekOffset + 1);
+    state.seriesOpenMuscleId = null;
+    renderSeries();
   });
 
   // timer

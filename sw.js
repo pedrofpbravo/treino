@@ -6,7 +6,7 @@
 // precache, and the new service worker takes over on the next app launch.
 
 // Keep in sync with APP_VERSION in js/main.js.
-const CACHE = "treino-v7.1";
+const CACHE = "treino-v7.2";
 
 const PRECACHE = [
   "./",

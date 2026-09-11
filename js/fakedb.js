@@ -34,7 +34,6 @@ const store = {
     nameLower: normalize(ex.name),
     primaryMuscleId: `mus-${ex.primary}`,
     secondaryMuscleIds: ex.secondary.map((k) => `mus-${k}`),
-    otherMuscleIds: ex.others.map((k) => `mus-${k}`),
     refWeight: ex.refWeight || "",
     note: ex.note || "",
     createdAt: ts(),
@@ -284,7 +283,6 @@ const exerciseData = (data) => ({
   nameLower: normalize(data.name),
   primaryMuscleId: data.primaryMuscleId,
   secondaryMuscleIds: data.secondaryMuscleIds || [],
-  otherMuscleIds: data.otherMuscleIds || [],
   refWeight: data.refWeight || "",
   note: data.note || "",
 });
@@ -303,6 +301,7 @@ export async function updateExercise(eid, data) {
   Object.assign(store.exercises.find((e) => e.id === eid), exerciseData(data), { updatedAt: ts() });
   emit.exercises();
 }
+export async function updateExerciseMuscles() {}
 export async function deleteExercise(eid, dayPatches) {
   (dayPatches || []).forEach(({ dayId, entries }) => {
     const day = store.days.find((d) => d.id === dayId);
@@ -407,9 +406,10 @@ export async function importBackup(data) {
   };
   (data.muscles || []).forEach((m) => upsert(store.muscles, { ...m }));
   (data.cardioTypes || []).forEach((type) => upsert(store.cardioTypes, { ...type }));
-  (data.exercises || []).forEach((e) =>
-    upsert(store.exercises, { ...e, nameLower: normalize(e.name), createdAt: ts(), updatedAt: ts() })
-  );
+  (data.exercises || []).forEach((e) => {
+    if (!e.id || !e.name) return;
+    upsert(store.exercises, { id: e.id, ...exerciseData(e), createdAt: ts(), updatedAt: ts() });
+  });
   (data.programs || []).forEach((p) =>
     upsert(store.programs, { ...p, nameLower: normalize(p.name), createdAt: ts() })
   );

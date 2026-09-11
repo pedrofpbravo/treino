@@ -2,6 +2,65 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
+## 2026-09-11 — v7.2: barras fixas no iOS, card compacto, aba Séries, revisão de músculos
+
+### Request (Pedro)
+Cinco itens; 1 a 4 implementados, 5 só desenhado: (1) bug visual das barras
+fixas (tabbar + timer) no meio da tela após uso do teclado iOS; (2) card do
+treino mostrando mais o nome do exercício (compactar a direita, setas/gear
+intactos); (3) nova aba "Séries" com séries semanais por grupo muscular
+(principal = 1, secundário = 0,5, drill-down por exercício); (4) revisão da
+base de exercícios (músculos principal/secundário) validada com literatura,
+mais a eliminação do tier "Outros" do cadastro; (5) proposta escrita da
+funcionalidade de exercício substituto (FUNCIONALIDADE-SUBSTITUTO.md, sem
+implementar).
+
+### Scope locked (uma rodada AskUserQuestion)
+Bug 1 envolveu teclado (confirma hipótese visualViewport); card: compactar a
+direita, nome em 1 linha; Séries: 5ª aba, semana seg-dom com navegação,
+"outros" deixa de existir (só principal + secundários); catálogo real obtido
+por backup JSON exportado do app (Firebase MCP indisponível na hora).
+
+### Execução (5 briefs Codex via codex exec, gpt-5.6-sol xhigh, serializados)
+- Brief 1 (`brief-v72-1-fixedbars.md`): CSS var `--visual-viewport-bottom`
+  (default 0px, no-op fora do iOS) + `wireVisualViewportBars()` em main.js
+  recalculando via visualViewport resize/scroll/focusout; #tabbar e #timer-bar
+  agora somam a var no bottom. Revisado: mecanismo correto (clientHeight -
+  vv.height - vv.offsetTop), debounce rAF + settle 80ms + focusout 300ms.
+  Validação real no iPhone fica com Pedro (não reproduzível no desktop).
+- Brief 2 (`brief-v72-2-cardheader.md`): .wc-name 15px, .wc-target 12px/pad
+  2px 7px, .wc-status 10px, gaps 8px/6px; caret e gear intactos (40x40
+  verificado no preview).
+- Brief 3 (`brief-v72-3-series-tab.md`): `weeklyMuscleSets()` puro em
+  logic.js (done !== false, exercício deletado ignorado, agregação por
+  exercício/semana); aba nova #tab-series + botão 🔢 na tabbar; navegação de
+  semana (próxima desabilitada na atual); acordeão de breakdown ("×0.5 = +N").
+  Teste node em scratchpad/test-weekly-sets.mjs: 5/5 PASS (rodado pelo Fable).
+- Brief 4 (`brief-v72-4-muscles.md`): tier "Outros" removido de index.html,
+  main.js, db.js, fakedb.js e seed.js (leitura de docs antigos segue
+  inofensiva; import de backups antigos ignora o campo); upsert único
+  `gym:muscle-review-v7-2` (batch via novo db.updateExerciseMuscles, deleteField
+  em otherMuscleIds, só docs existentes — não recria deletados) com a tabela de
+  33 exercícios revisada pelo Fable contra literatura (agachamentos/leg press:
+  posterior fora, adutores como secundário; abdutora: adutores fora; presses:
+  tríceps/ombros secundários; roscas: antebraço secundário; RDL: lombar
+  mantida). Codex também atualizou o seeder do smith para os novos secundários.
+- Brief 5 (`brief-v72-5-bump.md`): CACHE (sw.js) e APP_VERSION v7.2.
+
+### Review
+Cada diff lido pelo Fable + app rodado em #debug (SW/caches limpos; atenção:
+cache de módulo do browser serviu logic.js velho e produziu erro fantasma de
+export — resolvido com fetch cache:reload). Sem erros de console, Séries
+consistente (Ombros 23 = 11+4+4+8×0,5 no seed antigo; totais mudam após a
+correção de músculos, esperado).
+
+### Pendências / riscos
+- Fix do iOS precisa de validação real no iPhone (deploy ritual: fechar e
+  reabrir o PWA duas vezes).
+- FUNCIONALIDADE-SUBSTITUTO.md aguarda revisão do Pedro; pontos em aberto
+  listados no próprio doc (bloquear substituto já no dia? troca com séries já
+  marcadas? badge visual?).
+
 ## 2026-09-07 — v7.1: rascunho local até finalizar + prefill pela referência
 
 ### Request (Pedro)

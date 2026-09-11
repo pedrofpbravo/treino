@@ -354,6 +354,54 @@ export function weeklyFrequency(logs, nWeeks, today, extraDates = []) {
   return weeks;
 }
 
+// Completed set volume attributed to each muscle in one Monday-Sunday week.
+// The returned array is [{muscleId, total, exercises: [{exerciseId, name,
+// sets, factor, contribution}]}]. Exercise names always come from the live
+// catalog, and logs for exercises no longer in that catalog are ignored.
+export function weeklyMuscleSets(logs, exercisesById, weekStart) {
+  const weekEnd = addDaysStr(weekStart, 6);
+  const exerciseSets = new Map();
+
+  for (const log of logs || []) {
+    if (!log?.date || log.date < weekStart || log.date > weekEnd) continue;
+    const exercise = exercisesById?.get(log.exerciseId);
+    if (!exercise) continue;
+    const sets = (Array.isArray(log.sets) ? log.sets : [])
+      .filter((set) => set?.done !== false).length;
+    if (!sets) continue;
+
+    const current = exerciseSets.get(log.exerciseId);
+    if (current) current.sets += sets;
+    else exerciseSets.set(log.exerciseId, { exercise, sets });
+  }
+
+  const byMuscle = new Map();
+  const addContribution = (muscleId, exerciseId, exercise, sets, factor) => {
+    if (!muscleId) return;
+    if (!byMuscle.has(muscleId)) {
+      byMuscle.set(muscleId, { muscleId, total: 0, exercises: [] });
+    }
+    const muscle = byMuscle.get(muscleId);
+    const contribution = sets * factor;
+    muscle.total += contribution;
+    muscle.exercises.push({
+      exerciseId,
+      name: exercise.name || exerciseId,
+      sets,
+      factor,
+      contribution,
+    });
+  };
+
+  exerciseSets.forEach(({ exercise, sets }, exerciseId) => {
+    addContribution(exercise.primaryMuscleId, exerciseId, exercise, sets, 1);
+    (Array.isArray(exercise.secondaryMuscleIds) ? exercise.secondaryMuscleIds : [])
+      .forEach((muscleId) => addContribution(muscleId, exerciseId, exercise, sets, 0.5));
+  });
+
+  return [...byMuscle.values()];
+}
+
 // Cardio minutes per week for the last nWeeks (including the current one),
 // oldest first. Multiple entries on the same date are summed into one day.
 export function weeklyCardio(cardio, nWeeks = 12, today = todayStr()) {
