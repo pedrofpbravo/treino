@@ -1,6 +1,6 @@
-# Funcionalidade: exercício substituto (proposta, não implementada)
+# Funcionalidade: exercício substituto (IMPLEMENTADA no v7.3)
 
-Proposta para revisão. Nada disto está implementado; este documento existe para você ajustar o desenho antes de virar brief para o Codex.
+Status: implementada em 2026-09-11 com os ajustes decididos pelo Pedro sobre esta proposta: os similares são CADASTRADOS MANUALMENTE por exercício (campo `similarIds`, relação simétrica, seção "Similares" na aba Exercícios), em vez da sugestão automática por músculo principal descrita abaixo; trocar com séries marcadas descarta as séries do original (sem transferência, original não gera log). O restante do desenho abaixo foi implementado como proposto e o documento fica como registro da decisão.
 
 ## Resumo da recomendação
 

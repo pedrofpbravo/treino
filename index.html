@@ -116,7 +116,6 @@
           <button id="btn-add-cardio" class="btn small cardio-add-btn" type="button">＋ Cardio</button>
           <button id="btn-finish-workout" class="btn primary finish-btn" type="button" hidden>Iniciar treino</button>
         </div>
-        <ul id="today-cardio-list" class="today-cardio-list"></ul>
         <div id="workout-list" class="workout-list"></div>
         <p id="workout-empty" class="empty" hidden>Nenhum exercício neste dia. Toque em ✎ Editar dia para adicionar.</p>
         <p id="workout-noday" class="empty" hidden>Crie um dia para este programa.</p>
@@ -260,7 +259,7 @@
         <span class="tab-ico">📈</span>Histórico
       </button>
       <button class="tabbtn" data-tab="series">
-        <span class="tab-ico">🔢</span>Séries
+        <span class="tab-ico">📊</span>Séries
       </button>
       <button class="tabbtn" data-tab="ajustes">
         <span class="tab-ico">⚙</span>Ajustes
@@ -330,6 +329,14 @@
           <div id="ex-secondary-tags" class="muscle-tags"></div>
         </div>
       </div>
+      <div id="ex-similar-field" class="field" hidden>
+        <label for="ex-similar">Similares</label>
+        <div class="muscle-combobox">
+          <input id="ex-similar" autocomplete="off" aria-autocomplete="list" aria-controls="ex-similar-list" aria-expanded="false" placeholder="＋ Buscar exercício…">
+          <div id="ex-similar-list" class="muscle-options" role="listbox" hidden></div>
+          <div id="ex-similar-tags" class="muscle-tags"></div>
+        </div>
+      </div>
       <label class="field">
         <span>Peso de referência</span>
         <span class="input-unit">
@@ -388,6 +395,12 @@
       <span class="link-row-chev" aria-hidden="true">›</span>
     </button>
     <form id="detail-form">
+      <div id="detail-substitute-field" class="field">
+        <label for="detail-substitute-select">Substituir hoje</label>
+        <select id="detail-substitute-select"></select>
+        <button type="button" id="btn-detail-substitute-undo" class="btn ghost detail-substitute-undo" hidden>Voltar ao original</button>
+        <p id="detail-substitute-hint" class="detail-substitute-hint" hidden></p>
+      </div>
       <div class="field-row">
         <label class="field">
           <span>Séries</span>

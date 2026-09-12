@@ -190,6 +190,50 @@ export function prefillSets(entry, refWeightNum = null) {
   return Array.from({ length: n }, () => ({ reps, weight: refWeightNum, done: false }));
 }
 
+// Resolve the exercise shown and logged for a day entry. The entry keeps its
+// original id as its stable draft key; a live __subs target redirects only the
+// catalog data and eventual log. A stale target falls back for rendering while
+// remaining identifiable through missingSubstitute so finishing can skip it.
+export function resolveWorkoutExercise(entry, dayDraft, exercisesById) {
+  const getExercise = (id) => {
+    if (!id) return null;
+    if (exercisesById && typeof exercisesById.get === "function") {
+      return exercisesById.get(id) || null;
+    }
+    return exercisesById?.[id] || null;
+  };
+  const originalExerciseId = entry?.exerciseId || null;
+  const originalExercise = getExercise(originalExerciseId);
+  const subs = dayDraft?.__subs;
+  const rawSubstituteId = subs && typeof subs === "object" && !Array.isArray(subs)
+    ? subs[originalExerciseId]
+    : null;
+  const requestedSubstituteId =
+    typeof rawSubstituteId === "string" && rawSubstituteId && rawSubstituteId !== originalExerciseId
+      ? rawSubstituteId
+      : null;
+  const substituteExercise = getExercise(requestedSubstituteId);
+
+  return {
+    originalExerciseId,
+    originalExercise,
+    requestedSubstituteId,
+    substituteExercise,
+    exerciseId: substituteExercise?.id || originalExerciseId,
+    exercise: substituteExercise || originalExercise,
+    substituted: !!substituteExercise,
+    missingSubstitute: !!requestedSubstituteId && !substituteExercise,
+  };
+}
+
+// Reserved draft metadata must never make a workout look started.
+export function draftHasExerciseSets(dayDraft) {
+  if (!dayDraft || typeof dayDraft !== "object" || Array.isArray(dayDraft)) return false;
+  return Object.entries(dayDraft).some(([exerciseId, sets]) =>
+    exerciseId !== "__subs" && Array.isArray(sets) && sets.length > 0
+  );
+}
+
 // Draft sets are the local working copy of a workout in progress (they only
 // become logs on "Finalizar treino"). A set is recorded only when checked.
 export function draftSetDone(set) {

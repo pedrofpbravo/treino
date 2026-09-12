@@ -19,6 +19,8 @@ import {
   weekStartStr,
   logDocId,
   prefillSets,
+  resolveWorkoutExercise,
+  draftHasExerciseSets,
   draftSetDone,
   draftAllDone,
   recordedSets,
@@ -46,7 +48,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.2";
+const APP_VERSION = "v7.3";
 
 const $ = (id) => document.getElementById(id);
 
@@ -66,7 +68,8 @@ function saveCollapsedCards() {
 // ---------- workout drafts ----------
 // A workout in progress lives ONLY here (localStorage) until "Finalizar
 // treino" writes it to Firestore: expanding/collapsing cards and checking
-// sets never touch the history. Shape: { "date|dayId": { exerciseId: sets[] } }.
+// sets never touch the history. Shape:
+// { "date|dayId": { exerciseId: sets[], __subs: { originalId: substituteId } } }.
 // Drafts from previous dates are pruned: an unfinished workout is discarded.
 
 const DRAFTS_KEY = "gym:drafts";
@@ -94,8 +97,13 @@ function pruneDrafts(today) {
 
 const draftKeyOf = (date, dayId) => `${date}|${dayId}`;
 
+function dayDraftFor(date, dayId) {
+  const dayDraft = drafts[draftKeyOf(date, dayId)];
+  return dayDraft && typeof dayDraft === "object" && !Array.isArray(dayDraft) ? dayDraft : null;
+}
+
 function draftSetsFor(date, dayId, exerciseId) {
-  const sets = drafts[draftKeyOf(date, dayId)]?.[exerciseId];
+  const sets = dayDraftFor(date, dayId)?.[exerciseId];
   return Array.isArray(sets) ? sets : null;
 }
 
@@ -106,9 +114,34 @@ function setDraftSets(date, dayId, exerciseId, sets) {
   saveDrafts();
 }
 
+function setDraftSubstitution(date, dayId, originalExerciseId, substituteExerciseId) {
+  const key = draftKeyOf(date, dayId);
+  if (substituteExerciseId) {
+    if (!dayDraftFor(date, dayId)) drafts[key] = {};
+    const subs = drafts[key].__subs;
+    if (!subs || typeof subs !== "object" || Array.isArray(subs)) drafts[key].__subs = {};
+    drafts[key].__subs[originalExerciseId] = substituteExerciseId;
+  } else {
+    const dayDraft = dayDraftFor(date, dayId);
+    if (dayDraft?.__subs && typeof dayDraft.__subs === "object") {
+      delete dayDraft.__subs[originalExerciseId];
+      if (Object.keys(dayDraft.__subs).length === 0) delete dayDraft.__subs;
+    }
+    if (dayDraft && Object.keys(dayDraft).length === 0) delete drafts[key];
+  }
+  saveDrafts();
+}
+
+function discardDraftSets(date, dayId, exerciseId) {
+  const key = draftKeyOf(date, dayId);
+  const dayDraft = dayDraftFor(date, dayId);
+  if (!dayDraft) return;
+  delete dayDraft[exerciseId];
+  if (Object.keys(dayDraft).length === 0) delete drafts[key];
+}
+
 function dayDraftStarted(date, dayId) {
-  const day = drafts[draftKeyOf(date, dayId)];
-  return !!day && Object.values(day).some((sets) => Array.isArray(sets) && sets.length > 0);
+  return draftHasExerciseSets(dayDraftFor(date, dayId));
 }
 
 function workoutStarted(date, dayId) {
@@ -148,11 +181,13 @@ const state = {
   editingExerciseId: null,
   editingDayId: null,
   detailExerciseId: null,
+  detailEffectiveExerciseId: null,
   exlogExerciseId: null, // exercise shown in the full-log sheet
   reorderMode: false,
   draftEntries: [], // day sheet: [{exerciseId, targetSets, repMin, repMax}]
   draftPrimaryMuscleId: null,
   draftSecondary: new Set(), // exercise sheet muscle picks
+  draftSimilarIds: new Set(), // immediate-save links shown in the exercise sheet
   seededMuscles: false,
   seededExercises: false,
   seededPrograms: false,
@@ -179,6 +214,8 @@ function openSheet(id) {
 
 function closeSheets() {
   state.exlogExerciseId = null;
+  state.detailExerciseId = null;
+  state.detailEffectiveExerciseId = null;
   $("sheet-backdrop").hidden = true;
   document.querySelectorAll(".sheet").forEach((s) => (s.hidden = true));
 }
@@ -287,46 +324,6 @@ function renderTreino() {
   reorderBtn.classList.toggle("on", state.reorderMode);
   reorderBtn.setAttribute("aria-pressed", String(state.reorderMode));
   renderWorkout();
-  renderTodayCardio();
-}
-
-function renderTodayCardio() {
-  const ul = $("today-cardio-list");
-  ul.innerHTML = "";
-  state.cardio
-    .filter((entry) => entry.date === todayStr())
-    .sort((a, b) => {
-      const at = a.ts && typeof a.ts.toMillis === "function" ? a.ts.toMillis() : 0;
-      const bt = b.ts && typeof b.ts.toMillis === "function" ? b.ts.toMillis() : 0;
-      return bt - at;
-    })
-    .forEach((entry) => {
-      const li = document.createElement("li");
-      li.className = "today-cardio-row";
-      const main = document.createElement("div");
-      main.className = "today-cardio-main";
-      const title = document.createElement("span");
-      title.className = "today-cardio-title";
-      title.textContent = `${entry.typeName || "Cardio"} · ${entry.minutes} min`;
-      main.appendChild(title);
-      if (entry.note) {
-        const note = document.createElement("span");
-        note.className = "today-cardio-note";
-        note.textContent = entry.note.replace(/\n/g, " · ");
-        main.appendChild(note);
-      }
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "today-cardio-remove";
-      remove.textContent = "×";
-      remove.setAttribute("aria-label", `Remover ${entry.typeName || "cardio"}`);
-      remove.addEventListener("click", () => {
-        db.deleteCardio(entry.id).catch(() => toast("Erro ao remover cardio."));
-        toast("Cardio removido.");
-      });
-      li.append(main, remove);
-      ul.appendChild(li);
-    });
 }
 
 function openCardioSheet() {
@@ -575,8 +572,9 @@ function makeDraggableList(list) {
 // (peach fill) needs every set checked, the in-progress accent edge needs
 // at least one; a merely opened card looks idle.
 function buildWorkoutCard(entry, day) {
-  const ex = state.exercisesById.get(entry.exerciseId);
   const today = todayStr();
+  const resolved = resolveWorkoutExercise(entry, dayDraftFor(today, day.id), state.exercisesById);
+  const ex = resolved.exercise;
   const sets = draftSetsFor(today, day.id, entry.exerciseId);
   const started = !!sets;
   const doneCount = started ? sets.filter(draftSetDone).length : 0;
@@ -610,6 +608,13 @@ function buildWorkoutCard(entry, day) {
     nameLine.appendChild(t);
   }
   main.appendChild(nameLine);
+
+  if (resolved.substituted) {
+    const substitution = document.createElement("span");
+    substitution.className = "wc-substitution";
+    substitution.textContent = `no lugar de: ${resolved.originalExercise?.name || entry.exerciseId}`;
+    main.appendChild(substitution);
+  }
 
   // Reference line carries the status badge on its right: the name line stays
   // free so a long exercise name is not truncated by a badge.
@@ -669,7 +674,7 @@ function buildWorkoutCard(entry, day) {
       // Local draft only, no Firestore write. Seed from today's already-saved
       // log when there is one (finished + reopened day), else from the target.
       const savedLog = state.logsById.get(
-        logDocId({ date: today, dayId: day.id, exerciseId: entry.exerciseId })
+        logDocId({ date: today, dayId: day.id, exerciseId: resolved.exerciseId })
       );
       const seed = savedLog && Array.isArray(savedLog.sets) && savedLog.sets.length > 0
         ? draftFromLog(savedLog)
@@ -696,31 +701,124 @@ function buildWorkoutCard(entry, day) {
 // are edited in the Exercícios tab.
 
 function openDetailSheet(exerciseId) {
-  const ex = state.exercisesById.get(exerciseId);
   const day = currentDay();
   const entry = (day?.entries || []).find((e) => e.exerciseId === exerciseId);
-  if (!ex || !entry) return;
+  if (!day || !entry) return;
+  const resolved = resolveWorkoutExercise(entry, dayDraftFor(todayStr(), day.id), state.exercisesById);
+  const ex = resolved.exercise;
+  if (!ex) return;
   state.detailExerciseId = exerciseId;
+  state.detailEffectiveExerciseId = resolved.exerciseId;
   $("sheet-detail-title").textContent = ex.name;
   $("detail-muscles").textContent = muscleSummary(ex);
   $("det-sets").value = entry.targetSets || 3;
   $("det-reps").value = entryReps(entry);
   $("det-refweight").value = ex.refWeight || "";
   $("det-note").value = ex.note || "";
-  $("detail-history-sub").textContent = historySummary(exerciseId);
+  $("detail-history-sub").textContent = historySummary(resolved.exerciseId);
+  renderDetailSubstitute(entry, resolved);
   openSheet("sheet-detail");
+}
+
+function renderDetailSubstitute(entry, resolved) {
+  const select = $("detail-substitute-select");
+  const undo = $("btn-detail-substitute-undo");
+  const hint = $("detail-substitute-hint");
+  select.innerHTML = "";
+
+  if (resolved.requestedSubstituteId) {
+    select.hidden = true;
+    undo.hidden = false;
+    hint.hidden = false;
+    hint.textContent = resolved.missingSubstitute
+      ? "O substituto foi removido. Volte ao original para continuar."
+      : `${resolved.exercise.name} no lugar de ${resolved.originalExercise?.name || entry.exerciseId}.`;
+    return;
+  }
+
+  undo.hidden = true;
+  const similar = [...new Set(resolved.originalExercise?.similarIds || [])]
+    .map((id) => state.exercisesById.get(id))
+    .filter((exercise) => exercise && exercise.id !== entry.exerciseId);
+  if (similar.length === 0) {
+    select.hidden = true;
+    hint.hidden = false;
+    hint.textContent = "Cadastre similares na aba Exercícios.";
+    return;
+  }
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Escolha um exercício…";
+  select.appendChild(placeholder);
+  sortExercises(similar).forEach((exercise) => {
+    const option = document.createElement("option");
+    option.value = exercise.id;
+    option.textContent = exercise.name;
+    select.appendChild(option);
+  });
+  select.value = "";
+  select.hidden = false;
+  hint.hidden = true;
+}
+
+function chooseSubstituteToday(substituteExerciseId) {
+  const day = currentDay();
+  const originalExerciseId = state.detailExerciseId;
+  if (!day || !originalExerciseId || !substituteExerciseId) return;
+  const select = $("detail-substitute-select");
+  if ((day.entries || []).some((entry) => entry.exerciseId === substituteExerciseId)) {
+    select.value = "";
+    toast("Esse exercício já faz parte do dia.");
+    return;
+  }
+
+  const today = todayStr();
+  const sets = draftSetsFor(today, day.id, originalExerciseId);
+  if (sets?.some(draftSetDone) && !confirm("Descartar as séries do exercício original?")) {
+    select.value = "";
+    return;
+  }
+
+  discardDraftSets(today, day.id, originalExerciseId);
+  setDraftSubstitution(today, day.id, originalExerciseId, substituteExerciseId);
+  collapsedCards.delete(`${day.id}|${originalExerciseId}`);
+  saveCollapsedCards();
+  renderTreino();
+  openDetailSheet(originalExerciseId);
+  toast("Substituição aplicada hoje.");
+}
+
+function restoreOriginalToday() {
+  const day = currentDay();
+  const originalExerciseId = state.detailExerciseId;
+  if (!day || !originalExerciseId) return;
+  const today = todayStr();
+  const sets = draftSetsFor(today, day.id, originalExerciseId);
+  if (sets?.some(draftSetDone) && !confirm("Descartar as séries do exercício substituto?")) return;
+
+  discardDraftSets(today, day.id, originalExerciseId);
+  setDraftSubstitution(today, day.id, originalExerciseId, null);
+  collapsedCards.delete(`${day.id}|${originalExerciseId}`);
+  saveCollapsedCards();
+  renderTreino();
+  openDetailSheet(originalExerciseId);
+  toast("Exercício original restaurado.");
 }
 
 function submitDetailForm(e) {
   e.preventDefault();
-  const ex = state.exercisesById.get(state.detailExerciseId);
   const day = currentDay();
-  if (!ex || !day) return;
+  const entry = (day?.entries || []).find((item) => item.exerciseId === state.detailExerciseId);
+  if (!day || !entry) return;
+  const resolved = resolveWorkoutExercise(entry, dayDraftFor(todayStr(), day.id), state.exercisesById);
+  const ex = resolved.exercise;
+  if (!ex) return;
 
   const targetSets = Math.max(1, Math.floor(Number($("det-sets").value)) || 3);
   const reps = Math.max(1, Math.floor(Number($("det-reps").value)) || 10);
   const entries = (day.entries || []).map((en) =>
-    en.exerciseId === ex.id ? { exerciseId: ex.id, targetSets, reps } : en
+    en.exerciseId === entry.exerciseId ? { exerciseId: entry.exerciseId, targetSets, reps } : en
   );
   db.updateDay(day.id, { name: day.name, entries }).catch(() => toast("Erro ao salvar."));
 
@@ -728,6 +826,7 @@ function submitDetailForm(e) {
     name: ex.name,
     primaryMuscleId: ex.primaryMuscleId,
     secondaryMuscleIds: ex.secondaryMuscleIds || [],
+    similarIds: ex.similarIds || [],
     refWeight: numericRefWeight("det-refweight"),
     note: $("det-note").value.trim(),
   }).catch(() => toast("Erro ao salvar."));
@@ -852,15 +951,19 @@ function openFinishSheet() {
   const day = currentDay();
   if (!day) return;
   const today = todayStr();
+  const dayDraft = dayDraftFor(today, day.id);
   const items = (day.entries || [])
     .map((en) => {
       const sets = draftSetsFor(today, day.id, en.exerciseId);
       const recorded = recordedSets(sets);
       if (recorded.length === 0) return null;
+      const resolved = resolveWorkoutExercise(en, dayDraft, state.exercisesById);
       return {
-        name: state.exercisesById.get(en.exerciseId)?.name || en.exerciseId,
+        name: resolved.missingSubstitute
+          ? `${resolved.originalExercise?.name || en.exerciseId} (substituto removido)`
+          : resolved.exercise?.name || en.exerciseId,
         recorded,
-        complete: draftAllDone(sets),
+        complete: !resolved.missingSubstitute && draftAllDone(sets),
       };
     })
     .filter(Boolean);
@@ -921,30 +1024,63 @@ function confirmFinishWorkout() {
   if (!day) return;
   const program = currentProgram();
   const today = todayStr();
+  const dayDraft = dayDraftFor(today, day.id);
+  const plans = (day.entries || []).map((entry) => ({
+    entry,
+    resolved: resolveWorkoutExercise(entry, dayDraft, state.exercisesById),
+    recorded: recordedSets(draftSetsFor(today, day.id, entry.exerciseId)),
+  }));
+  const protectedExerciseIds = new Set(
+    plans
+      .filter(({ resolved }) => !resolved.missingSubstitute)
+      .map(({ resolved }) => resolved.exerciseId)
+      .filter(Boolean)
+  );
+  const substitutionRelatedIds = new Set();
+  plans.forEach(({ resolved }) => {
+    if (resolved.originalExerciseId) substitutionRelatedIds.add(resolved.originalExerciseId);
+    if (resolved.requestedSubstituteId) substitutionRelatedIds.add(resolved.requestedSubstituteId);
+    (resolved.originalExercise?.similarIds || []).forEach((id) => substitutionRelatedIds.add(id));
+  });
+
+  // Re-finishing after a substitution/undo removes stale logs for the known
+  // alternatives while preserving every exercise that is effective today.
+  state.logs
+    .filter((log) =>
+      log.date === today &&
+      log.dayId === day.id &&
+      substitutionRelatedIds.has(log.exerciseId) &&
+      !protectedExerciseIds.has(log.exerciseId)
+    )
+    .forEach((log) => db.deleteLog(log.id).catch(() => toast("Erro ao atualizar exercícios do treino.")));
 
   // This is the only moment a workout reaches the history: one log per
   // exercise with at least one checked set, holding the checked sets only.
   // Deterministic ids make re-finishing after a reopen an overwrite, not a
   // duplicate. Fire-and-forget like every other write: the local cache
   // applies them immediately and syncs later, so finishing works offline.
-  (day.entries || []).forEach((entry) => {
-    const recorded = recordedSets(draftSetsFor(today, day.id, entry.exerciseId));
+  let missingSubstitutes = 0;
+  plans.forEach(({ entry, resolved, recorded }) => {
     if (recorded.length === 0) return;
-    const ex = state.exercisesById.get(entry.exerciseId);
+    if (resolved.missingSubstitute) {
+      missingSubstitutes++;
+      return;
+    }
+    const ex = resolved.exercise;
     db.saveLog({
       date: today,
       programId: program?.id || day.programId,
       dayId: day.id,
-      exerciseId: entry.exerciseId,
-      exerciseName: ex?.name || entry.exerciseId,
+      exerciseId: resolved.exerciseId,
+      exerciseName: ex?.name || resolved.exerciseId,
       dayName: day.name,
       programName: program?.name || "",
       sets: recorded,
     }).catch(() => toast("Erro ao salvar exercícios do treino."));
   });
-
   const pendingSessionId = sessionId(today, day.id);
   pendingFinishToastId = pendingSessionId;
+  pendingFinishSkippedCount = missingSubstitutes;
   db.finishSession({
     date: today,
     programId: program?.id || day.programId,
@@ -952,7 +1088,10 @@ function confirmFinishWorkout() {
     dayName: day.name,
     programName: program?.name || "",
   }).catch(() => {
-    if (pendingFinishToastId === pendingSessionId) pendingFinishToastId = null;
+    if (pendingFinishToastId === pendingSessionId) {
+      pendingFinishToastId = null;
+      pendingFinishSkippedCount = 0;
+    }
     toast("Erro ao finalizar treino.");
   });
   if (localStorage.getItem("gym:workoutStart") === `${today}|${day.id}`) {
@@ -1357,6 +1496,7 @@ function renderExercises() {
 // ---------- exercise sheet (new / edit) ----------
 
 const exerciseMuscleComboboxes = {};
+let exerciseSimilarCombobox = null;
 
 function muscleCombobox({ inputEl, listEl, tagsEl, multi, getPicked, getExcluded, onPick }) {
   const hideOptions = () => {
@@ -1452,10 +1592,105 @@ function muscleCombobox({ inputEl, listEl, tagsEl, multi, getPicked, getExcluded
   };
 }
 
+function similarExerciseCombobox({ inputEl, listEl, tagsEl }) {
+  const hideOptions = () => {
+    listEl.hidden = true;
+    inputEl.setAttribute("aria-expanded", "false");
+  };
+
+  const changeLink = (similarId, linked) => {
+    const exerciseId = state.editingExerciseId;
+    if (!exerciseId || exerciseId === similarId) return;
+    const previous = new Set(state.draftSimilarIds);
+    if (linked) state.draftSimilarIds.add(similarId);
+    else state.draftSimilarIds.delete(similarId);
+    inputEl.value = "";
+    render();
+    db.updateSimilarLink(exerciseId, similarId, linked).catch(() => {
+      if (state.editingExerciseId === exerciseId) {
+        state.draftSimilarIds = previous;
+        render();
+      }
+      toast("Erro ao atualizar exercícios similares.");
+    });
+  };
+
+  const renderOptions = () => {
+    const query = normalize(inputEl.value);
+    const matches = sortExercises(state.exercises.filter((exercise) =>
+      exercise.id !== state.editingExerciseId &&
+      !state.draftSimilarIds.has(exercise.id) &&
+      normalize(exercise.name).includes(query)
+    ));
+    listEl.innerHTML = "";
+    matches.forEach((exercise) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "muscle-option";
+      option.setAttribute("role", "option");
+      option.dataset.exerciseId = exercise.id;
+      option.textContent = exercise.name;
+      option.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        changeLink(exercise.id, true);
+        inputEl.focus();
+      });
+      listEl.appendChild(option);
+    });
+    if (matches.length === 0) {
+      const empty = document.createElement("span");
+      empty.className = "muscle-option empty";
+      empty.textContent = "Nenhum exercício encontrado";
+      listEl.appendChild(empty);
+    }
+    listEl.hidden = false;
+    inputEl.setAttribute("aria-expanded", "true");
+  };
+
+  const renderTags = () => {
+    tagsEl.innerHTML = "";
+    state.draftSimilarIds.forEach((id) => {
+      const exercise = state.exercisesById.get(id);
+      if (!exercise) return;
+      const tag = document.createElement("span");
+      tag.className = "muscle-tag";
+      tag.appendChild(document.createTextNode(exercise.name));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Desvincular ${exercise.name}`);
+      remove.addEventListener("click", () => changeLink(id, false));
+      tag.appendChild(remove);
+      tagsEl.appendChild(tag);
+    });
+  };
+
+  const render = () => {
+    renderTags();
+    if (document.activeElement === inputEl) renderOptions();
+    else hideOptions();
+  };
+
+  inputEl.addEventListener("focus", renderOptions);
+  inputEl.addEventListener("input", renderOptions);
+  inputEl.addEventListener("blur", hideOptions);
+  inputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") hideOptions();
+    if (e.key !== "Enter") return;
+    const firstId = listEl.querySelector(".muscle-option[role=option]")?.dataset.exerciseId;
+    if (!firstId) return;
+    e.preventDefault();
+    changeLink(firstId, true);
+  });
+
+  return { render };
+}
+
 function renderExerciseSheetGrids() {
   const primary = state.draftPrimaryMuscleId;
   state.draftSecondary.delete(primary);
   Object.values(exerciseMuscleComboboxes).forEach((combobox) => combobox.render());
+  exerciseSimilarCombobox?.render();
 }
 
 function openExerciseSheet(exerciseId) {
@@ -1469,6 +1704,9 @@ function openExerciseSheet(exerciseId) {
   $("ex-primary").value = muscleName(state.draftPrimaryMuscleId);
   $("ex-secondary").value = "";
   state.draftSecondary = new Set(ex?.secondaryMuscleIds || []);
+  state.draftSimilarIds = new Set(ex?.similarIds || []);
+  $("ex-similar-field").hidden = !ex;
+  $("ex-similar").value = "";
   renderExerciseSheetGrids();
 
   $("ex-refweight").value = ex?.refWeight || "";
@@ -1495,6 +1733,7 @@ function submitExerciseForm(e) {
     name,
     primaryMuscleId,
     secondaryMuscleIds: [...state.draftSecondary].filter((id) => id !== primaryMuscleId),
+    similarIds: [...state.draftSimilarIds],
     refWeight: numericRefWeight("ex-refweight"),
     note: $("ex-note").value.trim(),
   };
@@ -1520,7 +1759,13 @@ function deleteCurrentExercise() {
     dayId: d.id,
     entries: (d.entries || []).filter((e) => e.exerciseId !== ex.id),
   }));
-  db.deleteExercise(ex.id, dayPatches).catch(() => toast("Erro ao excluir."));
+  const similarExerciseIds = [...new Set([
+    ...(ex.similarIds || []),
+    ...state.exercises
+      .filter((exercise) => (exercise.similarIds || []).includes(ex.id))
+      .map((exercise) => exercise.id),
+  ])].filter((id) => id !== ex.id && state.exercisesById.has(id));
+  db.deleteExercise(ex.id, dayPatches, similarExerciseIds).catch(() => toast("Erro ao excluir."));
   closeSheets();
 }
 
@@ -1815,22 +2060,31 @@ function renderCardio() {
     ul.className = "group-items";
     [...week.days].reverse().forEach((day) => {
       const entries = state.cardio.filter((entry) => entry.date === day.date);
-      const li = document.createElement("li");
-      li.className = "item-row cardio-day-row";
-      const main = document.createElement("div");
-      main.className = "item-main";
-      const date = document.createElement("span");
-      date.className = "item-name";
-      date.textContent = fmtDateFull(day.date);
-      const types = document.createElement("span");
-      types.className = "item-sub";
-      types.textContent = entries.map((entry) => entry.typeName || "Cardio").join(" · ");
-      const minutes = document.createElement("span");
-      minutes.className = "item-side";
-      minutes.innerHTML = `<b>${day.minutes} min</b>`;
-      main.append(date, types);
-      li.append(main, minutes);
-      ul.appendChild(li);
+      entries.forEach((entry) => {
+        const li = document.createElement("li");
+        li.className = "item-row cardio-entry-row";
+        const main = document.createElement("div");
+        main.className = "item-main";
+        const title = document.createElement("span");
+        title.className = "item-name";
+        title.textContent = `${fmtDateFull(entry.date)} · ${entry.typeName || "Cardio"}`;
+        main.appendChild(title);
+        if (entry.note) {
+          const note = document.createElement("span");
+          note.className = "item-sub cardio-entry-note";
+          note.textContent = entry.note;
+          main.appendChild(note);
+        }
+        const minutes = document.createElement("span");
+        minutes.className = "item-side";
+        minutes.innerHTML = `<b>${entry.minutes} min</b>`;
+        li.append(main, minutes);
+        makeSwipeable(li, () => {
+          db.deleteCardio(entry.id).catch(() => toast("Erro ao remover cardio."));
+          toast("Cardio removido.");
+        });
+        ul.appendChild(li);
+      });
     });
     group.append(head, ul);
     list.appendChild(group);
@@ -2050,6 +2304,7 @@ function buildBackup() {
       name: e.name,
       primaryMuscleId: e.primaryMuscleId || null,
       secondaryMuscleIds: e.secondaryMuscleIds || [],
+      similarIds: e.similarIds || [],
       refWeight: e.refWeight || "",
       note: e.note || "",
       createdAt: iso(e.createdAt),
@@ -2217,48 +2472,70 @@ const SMITH_SEED_KEY = "gym:seed-smith-v6";
 const CARDIO_BIKES_KEY = "gym:cardio-bikes-v6-1";
 const FINISH_BACKFILL_KEY = "gym:session-backfill-v6-5";
 const MUSCLE_REVIEW_KEY = "gym:muscle-review-v7-2";
+const MUSCLE_TAXONOMY_KEY = "gym:muscle-taxonomy-v7-3";
 const FINISH_BACKFILL_DATES = ["2026-09-05"];
-const MUSCLE_REVIEW_CORRECTIONS = [
-  ["RaGL7etCaIjoUIA0tVje", "mus-panturrilha", []],
-  ["ex-abdominal_maquina", "mus-abdomen", []],
-  ["ex-abdutora_maquina", "mus-gluteos", []],
-  ["ex-agachamento-smith", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
-  ["ex-agachamento_bulgaro", "mus-quadriceps", ["mus-gluteos"]],
-  ["ex-agachamento_pendulo", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
+const MUSCLE_TAXONOMY = [
+  ["mus-peito", "Peito"],
+  ["mus-ombro-anterior", "Ombro anterior"],
+  ["mus-ombro-lateral", "Ombro lateral"],
+  ["mus-ombro-posterior", "Ombro posterior"],
+  ["mus-dorsais", "Dorsais"],
+  ["mus-costas-superiores", "Costas superiores"],
+  ["mus-biceps", "Bíceps"],
+  ["mus-triceps", "Tríceps"],
+  ["mus-antebraco", "Antebraço"],
+  ["mus-quadriceps", "Quadríceps"],
+  ["mus-posterior", "Posterior de coxa"],
+  ["mus-gluteos", "Glúteos"],
+  ["mus-panturrilha", "Panturrilha"],
+  ["mus-abdomen", "Abdômen"],
+  ["mus-lombar", "Lombar (eretores)"],
+  ["mus-adutores", "Adutores/Abdutores"],
+].map(([id, name], order) => ({ id, name, order }));
+const MUSCLE_TAXONOMY_DELETIONS = ["mus-ombros", "mus-costas", "mus-trapezio"];
+const MUSCLE_TAXONOMY_CORRECTIONS = [
+  ["ex-supino_maquina", "mus-peito", ["mus-ombro-anterior", "mus-triceps"]],
+  ["ex-supino_inclinado_halteres", "mus-peito", ["mus-ombro-anterior", "mus-triceps"]],
+  ["fLUBCdfEvnJrwimwXUfG", "mus-peito", ["mus-triceps"]],
+  ["ex-crucifixo_maquina", "mus-peito", ["mus-ombro-anterior"]],
+  ["ex-desenvolvimento_ombros_maquina", "mus-ombro-anterior", ["mus-ombro-lateral", "mus-triceps"]],
+  ["ex-elevacao_lateral_unilateral_polia", "mus-ombro-lateral", []],
+  ["vfXcO0ys5my91L1gGg3c", "mus-ombro-lateral", []],
+  ["ex-face_pull", "mus-ombro-posterior", ["mus-costas-superiores"]],
+  ["ex-puxada_alta_maquina", "mus-dorsais", ["mus-biceps"]],
+  ["wUvgBaVruroejSdT6qJy", "mus-dorsais", ["mus-biceps"]],
+  ["ex-remada_fechada_unilateral_maquina", "mus-dorsais", ["mus-biceps", "mus-costas-superiores"]],
+  ["ex-remada_alta_articulada_maquina", "mus-costas-superiores", ["mus-ombro-posterior", "mus-biceps"]],
   ["ex-biceps_maquina", "mus-biceps", ["mus-antebraco"]],
   ["ex-biceps_scott_unilateral_halter", "mus-biceps", ["mus-antebraco"]],
+  ["ex-triceps_pushdown", "mus-triceps", []],
+  ["qIWbCS3Tz8B249g7OMH5", "mus-triceps", []],
+  ["ex-triceps_frances_unilateral_halter", "mus-triceps", []],
+  ["ex-triceps_testa_polia", "mus-triceps", []],
+  ["ex-agachamento_pendulo", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
+  ["ex-agachamento-smith", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
+  ["ex-agachamento_bulgaro", "mus-quadriceps", ["mus-gluteos"]],
+  ["ex-leg_press_45", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
+  ["faPCuEBTOUqy3pbFVlhd", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
   ["ex-cadeira_extensora", "mus-quadriceps", []],
   ["ex-cadeira_flexora_bilateral", "mus-posterior", []],
   ["ex-cadeira_flexora_unilateral", "mus-posterior", []],
-  ["ex-crucifixo_maquina", "mus-peito", ["mus-ombros"]],
-  ["ex-desenvolvimento_ombros_maquina", "mus-ombros", ["mus-triceps"]],
-  ["ex-elevacao_lateral_unilateral_polia", "mus-ombros", []],
-  ["ex-face_pull", "mus-ombros", ["mus-trapezio"]],
-  ["ex-hip_thrust", "mus-gluteos", ["mus-posterior"]],
-  ["ex-leg_press_45", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
-  ["ex-panturrilha_leg_press", "mus-panturrilha", []],
-  ["ex-panturrilha_smith", "mus-panturrilha", []],
-  ["ex-puxada_alta_maquina", "mus-costas", ["mus-biceps"]],
   ["ex-rdl_stiff", "mus-posterior", ["mus-gluteos", "mus-lombar"]],
-  ["ex-remada_alta_articulada_maquina", "mus-costas", ["mus-biceps", "mus-trapezio", "mus-ombros"]],
-  ["ex-remada_fechada_unilateral_maquina", "mus-costas", ["mus-biceps"]],
-  ["ex-supino_inclinado_halteres", "mus-peito", ["mus-ombros", "mus-triceps"]],
-  ["ex-supino_maquina", "mus-peito", ["mus-triceps", "mus-ombros"]],
-  ["ex-triceps_frances_unilateral_halter", "mus-triceps", []],
-  ["ex-triceps_pushdown", "mus-triceps", []],
-  ["ex-triceps_testa_polia", "mus-triceps", []],
-  ["fLUBCdfEvnJrwimwXUfG", "mus-peito", ["mus-triceps"]],
-  ["faPCuEBTOUqy3pbFVlhd", "mus-quadriceps", ["mus-gluteos", "mus-adutores"]],
-  ["qIWbCS3Tz8B249g7OMH5", "mus-triceps", []],
-  ["vfXcO0ys5my91L1gGg3c", "mus-ombros", []],
-  ["wUvgBaVruroejSdT6qJy", "mus-costas", ["mus-biceps"]],
+  ["ex-hip_thrust", "mus-gluteos", ["mus-posterior"]],
+  ["ex-abdutora_maquina", "mus-gluteos", []],
+  ["ex-panturrilha_smith", "mus-panturrilha", []],
+  ["ex-panturrilha_leg_press", "mus-panturrilha", []],
+  ["RaGL7etCaIjoUIA0tVje", "mus-panturrilha", []],
+  ["ex-abdominal_maquina", "mus-abdomen", []],
 ];
 let refWeightMigrationStarted = false;
 let noteDashFixStarted = false;
 let smithSeedStarted = false;
 let cardioBikesStarted = false;
 let finishBackfillStarted = false;
-let muscleReviewStarted = false;
+let muscleTaxonomyStarted = false;
+let muscleSnapshotReady = false;
+let exerciseSnapshotReady = false;
 
 async function migrateRefWeights(exercises) {
   if (refWeightMigrationStarted || localStorage.getItem(REFWEIGHT_MIGRATION_KEY)) return;
@@ -2284,6 +2561,7 @@ async function migrateRefWeights(exercises) {
       name: ex.name,
       primaryMuscleId: ex.primaryMuscleId,
       secondaryMuscleIds: ex.secondaryMuscleIds || [],
+      similarIds: ex.similarIds || [],
       refWeight,
       note,
     }));
@@ -2314,6 +2592,7 @@ async function fixNoteDashes(exercises) {
       name: ex.name,
       primaryMuscleId: ex.primaryMuscleId,
       secondaryMuscleIds: ex.secondaryMuscleIds || [],
+      similarIds: ex.similarIds || [],
       refWeight: ex.refWeight,
       note,
     }));
@@ -2396,11 +2675,11 @@ async function upsertCardioBikes(types) {
   }
 }
 
-async function applyMuscleReview() {
-  if (muscleReviewStarted || localStorage.getItem(MUSCLE_REVIEW_KEY)) return;
-  if (state.exercisesById.size === 0) return;
-  muscleReviewStarted = true;
-  const corrections = MUSCLE_REVIEW_CORRECTIONS
+async function applyMuscleTaxonomy() {
+  if (muscleTaxonomyStarted || localStorage.getItem(MUSCLE_TAXONOMY_KEY)) return;
+  if (!muscleSnapshotReady || !exerciseSnapshotReady) return;
+  muscleTaxonomyStarted = true;
+  const corrections = MUSCLE_TAXONOMY_CORRECTIONS
     .filter(([id]) => state.exercisesById.has(id))
     .map(([id, primaryMuscleId, secondaryMuscleIds]) => ({
       id,
@@ -2409,11 +2688,16 @@ async function applyMuscleReview() {
     }));
 
   try {
-    await db.updateExerciseMuscles(corrections);
+    await db.migrateMuscleTaxonomy({
+      muscles: MUSCLE_TAXONOMY,
+      corrections,
+      deleteIds: MUSCLE_TAXONOMY_DELETIONS,
+    });
+    localStorage.setItem(MUSCLE_TAXONOMY_KEY, "1");
     localStorage.setItem(MUSCLE_REVIEW_KEY, "1");
   } catch {
-    muscleReviewStarted = false;
-    toast("Erro ao atualizar músculos dos exercícios.");
+    muscleTaxonomyStarted = false;
+    toast("Erro ao atualizar a taxonomia muscular.");
   }
 }
 
@@ -2454,6 +2738,8 @@ function onMuscles(muscles) {
     return;
   }
   state.muscles = sortByOrder(muscles);
+  muscleSnapshotReady = true;
+  applyMuscleTaxonomy();
   renderMuscleChips();
   renderMusclesManager();
   renderExercises();
@@ -2469,10 +2755,11 @@ function onExercises(exercises) {
   }
   state.exercises = exercises;
   state.exercisesById = new Map(exercises.map((e) => [e.id, e]));
+  exerciseSnapshotReady = true;
   migrateRefWeights(exercises);
   fixNoteDashes(exercises);
   seedSmithExercise(exercises);
-  applyMuscleReview();
+  applyMuscleTaxonomy();
   renderExercises();
   renderTreino();
   renderSeries();
@@ -2507,6 +2794,7 @@ function onLogs(logs) {
 }
 
 let pendingFinishToastId = null;
+let pendingFinishSkippedCount = 0;
 
 function showCompletedCycle(program, progress) {
   $("cycle-sub").textContent =
@@ -2545,8 +2833,16 @@ function onSessions(sessions) {
     }
 
     if (pendingFinishToastId && sessions.some((session) => session.id === pendingFinishToastId)) {
+      const skipped = pendingFinishSkippedCount;
       pendingFinishToastId = null;
-      if (!shouldCelebrate) toast("Treino registrado. Bom descanso!");
+      pendingFinishSkippedCount = 0;
+      if (skipped > 0) {
+        toast(skipped === 1
+          ? "Treino registrado; substituto removido ignorado."
+          : `Treino registrado; ${skipped} substitutos removidos ignorados.`);
+      } else if (!shouldCelebrate) {
+        toast("Treino registrado. Bom descanso!");
+      }
     }
   });
 }
@@ -2564,7 +2860,6 @@ function onCardioTypes(types) {
 
 function onCardio(cardio) {
   state.cardio = cardio;
-  renderTodayCardio();
   renderCardioTypesManager();
   renderHist();
 }
@@ -2732,6 +3027,10 @@ function wire() {
   $("cardio-type").addEventListener("change", updateCardioTypeNote);
   $("cardio-form").addEventListener("submit", submitCardio);
   $("detail-form").addEventListener("submit", submitDetailForm);
+  $("detail-substitute-select").addEventListener("change", (e) => {
+    if (e.target.value) chooseSubstituteToday(e.target.value);
+  });
+  $("btn-detail-substitute-undo").addEventListener("click", restoreOriginalToday);
   $("program-add-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const name = $("program-add-name").value.trim();
@@ -2792,6 +3091,11 @@ function wire() {
       else state.draftSecondary.delete(id);
       renderExerciseSheetGrids();
     },
+  });
+  exerciseSimilarCombobox = similarExerciseCombobox({
+    inputEl: $("ex-similar"),
+    listEl: $("ex-similar-list"),
+    tagsEl: $("ex-similar-tags"),
   });
   $("btn-exercise-delete").addEventListener("click", deleteCurrentExercise);
 
@@ -2865,7 +3169,7 @@ function wire() {
   });
 
   // sheets
-  $("btn-detail-history").addEventListener("click", () => openExerciseLog(state.detailExerciseId));
+  $("btn-detail-history").addEventListener("click", () => openExerciseLog(state.detailEffectiveExerciseId));
   $("btn-exercise-history").addEventListener("click", () => openExerciseLog(state.editingExerciseId));
   $("btn-exlog-close").addEventListener("click", closeExerciseLog);
   $("sheet-backdrop").addEventListener("click", closeSheets);

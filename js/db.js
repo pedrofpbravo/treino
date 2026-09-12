@@ -25,6 +25,8 @@ import {
   deleteDoc,
   deleteField,
   writeBatch,
+  arrayUnion,
+  arrayRemove,
   serverTimestamp,
 } from "./vendor/firebase-firestore.js";
 
@@ -113,6 +115,7 @@ export function seedExercises() {
       nameLower: normalize(ex.name),
       primaryMuscleId: `mus-${ex.primary}`,
       secondaryMuscleIds: ex.secondary.map((k) => `mus-${k}`),
+      similarIds: [],
       refWeight: ex.refWeight || "",
       note: ex.note || "",
       createdAt: serverTimestamp(),
@@ -171,6 +174,23 @@ export function deleteMuscle(id) {
   return deleteDoc(doc(fs, "muscles", id));
 }
 
+export function migrateMuscleTaxonomy({ muscles, corrections, deleteIds }) {
+  const batch = writeBatch(fs);
+  muscles.forEach(({ id, name, order }) => {
+    batch.set(doc(fs, "muscles", id), { name, order }, { merge: true });
+  });
+  corrections.forEach(({ id, primaryMuscleId, secondaryMuscleIds }) => {
+    batch.update(doc(fs, "exercises", id), {
+      primaryMuscleId,
+      secondaryMuscleIds,
+      otherMuscleIds: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+  deleteIds.forEach((id) => batch.delete(doc(fs, "muscles", id)));
+  return batch.commit();
+}
+
 // ---------- cardio types ----------
 
 export function addCardioType(name, order) {
@@ -202,11 +222,12 @@ export function deleteCardioType(id) {
 
 // ---------- exercises ----------
 
-const exerciseData = ({ name, primaryMuscleId, secondaryMuscleIds, refWeight, note }) => ({
+const exerciseData = ({ name, primaryMuscleId, secondaryMuscleIds, similarIds, refWeight, note }) => ({
   name,
   nameLower: normalize(name),
   primaryMuscleId,
   secondaryMuscleIds: secondaryMuscleIds || [],
+  similarIds: Array.isArray(similarIds) ? [...new Set(similarIds.filter(Boolean))] : [],
   refWeight: refWeight || "",
   note: note || "",
   updatedAt: serverTimestamp(),
@@ -230,15 +251,17 @@ export function updateExercise(id, data) {
   return updateDoc(doc(fs, "exercises", id), exerciseData(data));
 }
 
-export function updateExerciseMuscles(corrections) {
+// One atomic batch keeps the relation symmetric in both exercise docs.
+export function updateSimilarLink(exerciseId, similarId, linked) {
   const batch = writeBatch(fs);
-  corrections.forEach(({ id, primaryMuscleId, secondaryMuscleIds }) => {
-    batch.update(doc(fs, "exercises", id), {
-      primaryMuscleId,
-      secondaryMuscleIds,
-      otherMuscleIds: deleteField(),
-      updatedAt: serverTimestamp(),
-    });
+  const transform = linked ? arrayUnion : arrayRemove;
+  batch.update(doc(fs, "exercises", exerciseId), {
+    similarIds: transform(similarId),
+    updatedAt: serverTimestamp(),
+  });
+  batch.update(doc(fs, "exercises", similarId), {
+    similarIds: transform(exerciseId),
+    updatedAt: serverTimestamp(),
   });
   return batch.commit();
 }
@@ -247,10 +270,17 @@ export function updateExerciseMuscles(corrections) {
 // delete the doc. Logs are left untouched; their name snapshots keep the
 // history and progression charts working.
 // dayPatches: [{ dayId, entries }] with the exercise already filtered out.
-export function deleteExercise(id, dayPatches) {
+// similarExerciseIds: every loaded exercise whose similarIds references id.
+export function deleteExercise(id, dayPatches, similarExerciseIds) {
   const batch = writeBatch(fs);
   (dayPatches || []).forEach(({ dayId, entries }) => {
     batch.update(doc(fs, "days", dayId), { entries });
+  });
+  (similarExerciseIds || []).forEach((exerciseId) => {
+    batch.update(doc(fs, "exercises", exerciseId), {
+      similarIds: arrayRemove(id),
+      updatedAt: serverTimestamp(),
+    });
   });
   batch.delete(doc(fs, "exercises", id));
   return batch.commit();
@@ -401,6 +431,7 @@ export async function importBackup(data) {
       nameLower: normalize(e.name),
       primaryMuscleId: e.primaryMuscleId || null,
       secondaryMuscleIds: e.secondaryMuscleIds || [],
+      similarIds: Array.isArray(e.similarIds) ? [...new Set(e.similarIds.filter(Boolean))] : [],
       refWeight: e.refWeight || "",
       note: e.note || "",
       createdAt: serverTimestamp(),

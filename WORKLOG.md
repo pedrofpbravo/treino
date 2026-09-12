@@ -2,6 +2,67 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
+## 2026-09-11 — v7.3: cardio fora do Treino, taxonomia muscular nova, exercício substituto
+
+### Request (Pedro, mesma sessão após o push do v7.2)
+Correções: (1) legibilidade dos nomes na sheet "Editar dia"; (2) ícone da aba
+Séries. Melhorias: (1) cardio não deve morar na aba Treino (registro vai só
+para o Histórico); (2) implementar o exercício substituto com pares
+cadastrados manualmente (campo começa vazio, cadastro via aba Exercícios);
+(3) retrabalhar grupos musculares: ombros em 3 cabeças, costas em dorsais/
+parte alta/eretores, validado em literatura de hipertrofia.
+
+### Scope locked (uma rodada AskUserQuestion + tabela de remap validada)
+Cardio: botão fica no Treino, lista some, remoção via swipe no Histórico >
+Cardio. Similares: relação simétrica. Taxonomia aprovada como proposta
+(16 grupos; Trapézio fundido em "Costas superiores"; Lombar renomeada
+"Lombar (eretores)"; Ombros/Costas/Trapézio deletados após remap). Trocar
+exercício com séries marcadas descarta as séries do original (sem
+transferência, original não gera log).
+
+### Execução (5 briefs Codex via codex exec, gpt-5.6-sol xhigh, serializados)
+- Brief 1 (`brief-v73-1-dayeditor.md`): .entry-name quebra em até 2 linhas
+  (13px, line-clamp 2), inputs 40px, gap 4px; ícone 🔢 → 📊.
+- Brief 2 (`brief-v73-2-cardio.md`): #today-cardio-list e renderTodayCardio
+  removidos; toast "Cardio registrado."; Histórico > Cardio agora tem uma
+  linha POR ENTRADA (data · tipo · min · nota) com makeSwipeable → deleteCardio.
+- Brief 3 (`brief-v73-3-taxonomy.md`): migração `gym:muscle-taxonomy-v7-3`
+  (db.migrateMuscleTaxonomy, um writeBatch atômico: cria mus-ombro-anterior/
+  lateral/posterior, mus-dorsais, mus-costas-superiores; renomeia mus-lombar;
+  reescreve primary/secondary dos 33 exercícios; reordena todos; deleta
+  mus-ombros/mus-costas/mus-trapezio). Substitui e subsume o upsert v7-2
+  (também seta o flag antigo). seed.js com os 16 grupos e remap; fakedb com
+  equivalente in-memory. Idempotente em device novo.
+- Brief 4 (`brief-v73-4-substituto.md`): campo `similarIds` (simétrico via
+  db.updateSimilarLink, writeBatch dos dois lados; deleteExercise limpa
+  referências; backup exporta/importa); seção "Similares" na sheet de edição
+  (chips + busca, só exercício existente); "Substituir hoje" na sheet ⚙ do
+  Treino (lista só os pares; bloqueia exercício já no dia; confirm + descarte
+  se original tem séries; "Voltar ao original"; linha "no lugar de: X" no
+  card; prefill com refWeight do substituto; `__subs` no rascunho local,
+  nunca no Firestore); Finalizar grava log no id do substituto e limpa logs
+  obsoletos de re-finalização pós-troca. Helpers puros
+  `resolveWorkoutExercise`/`draftHasExerciseSets` em logic.js com teste node
+  (3/3 PASS).
+- Brief 5 (`brief-v73-5-bump.md`): CACHE treino-v7.3, APP_VERSION v7.3,
+  remoção do updateExerciseMuscles morto (db.js + fakedb.js).
+
+### Review
+Diffs lidos pelo Fable; app verificado em #debug: taxonomia com 16 grupos na
+ordem certa, Séries dividindo por cabeça de ombro/região de costas, link
+simétrico supino↔tríceps-testa criado via fakedb, substituição end-to-end
+(card "no lugar de", prefill 12.5 do substituto, Finalizar gravou
+log-...-ex-triceps_testa_polia, original sem log, sessão registrada).
+Gotcha reconfirmada: python fantasma em 8095 (2 processos) matou o preview
+anunciado em 65517; matar PIDs e reiniciar resolveu. Cache de módulo do
+browser exige fetch cache:reload antes de reload ao validar edições.
+
+### Pendências / riscos
+- Migração de taxonomia roda no primeiro boot logado do iPhone; backup
+  pré-migração é o de 2026-09-11 (scratchpad/treino-backup-2026-09-11.json).
+- Pedro cadastra os pares de similares manualmente (todos começam vazios).
+- Fix de visualViewport do v7.2 ainda pendente de validação no aparelho.
+
 ## 2026-09-11 — v7.2: barras fixas no iOS, card compacto, aba Séries, revisão de músculos
 
 ### Request (Pedro)

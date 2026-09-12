@@ -34,6 +34,7 @@ const store = {
     nameLower: normalize(ex.name),
     primaryMuscleId: `mus-${ex.primary}`,
     secondaryMuscleIds: ex.secondary.map((k) => `mus-${k}`),
+    similarIds: [],
     refWeight: ex.refWeight || "",
     note: ex.note || "",
     createdAt: ts(),
@@ -247,6 +248,23 @@ export async function deleteMuscle(mid) {
   emit.muscles();
 }
 
+export async function migrateMuscleTaxonomy({ muscles, corrections, deleteIds }) {
+  muscles.forEach(({ id: mid, name, order }) => {
+    const muscle = store.muscles.find((item) => item.id === mid);
+    if (muscle) Object.assign(muscle, { name, order });
+    else store.muscles.push({ id: mid, name, order });
+  });
+  corrections.forEach(({ id: eid, primaryMuscleId, secondaryMuscleIds }) => {
+    const exercise = store.exercises.find((item) => item.id === eid);
+    if (!exercise) return;
+    Object.assign(exercise, { primaryMuscleId, secondaryMuscleIds, updatedAt: ts() });
+    delete exercise.otherMuscleIds;
+  });
+  store.muscles = store.muscles.filter((muscle) => !deleteIds.includes(muscle.id));
+  emit.muscles();
+  emit.exercises();
+}
+
 // ---------- cardio types ----------
 
 export async function addCardioType(name, order) {
@@ -283,6 +301,7 @@ const exerciseData = (data) => ({
   nameLower: normalize(data.name),
   primaryMuscleId: data.primaryMuscleId,
   secondaryMuscleIds: data.secondaryMuscleIds || [],
+  similarIds: Array.isArray(data.similarIds) ? [...new Set(data.similarIds.filter(Boolean))] : [],
   refWeight: data.refWeight || "",
   note: data.note || "",
 });
@@ -301,11 +320,28 @@ export async function updateExercise(eid, data) {
   Object.assign(store.exercises.find((e) => e.id === eid), exerciseData(data), { updatedAt: ts() });
   emit.exercises();
 }
-export async function updateExerciseMuscles() {}
+export async function updateSimilarLink(exerciseId, similarId, linked) {
+  const exercise = store.exercises.find((e) => e.id === exerciseId);
+  const similar = store.exercises.find((e) => e.id === similarId);
+  if (!exercise || !similar) throw new Error("Exercise not found");
+  const update = (item, otherId) => {
+    const ids = new Set(item.similarIds || []);
+    if (linked) ids.add(otherId);
+    else ids.delete(otherId);
+    item.similarIds = [...ids];
+    item.updatedAt = ts();
+  };
+  update(exercise, similarId);
+  update(similar, exerciseId);
+  emit.exercises();
+}
 export async function deleteExercise(eid, dayPatches) {
   (dayPatches || []).forEach(({ dayId, entries }) => {
     const day = store.days.find((d) => d.id === dayId);
     if (day) day.entries = entries;
+  });
+  store.exercises.forEach((exercise) => {
+    exercise.similarIds = (exercise.similarIds || []).filter((id) => id !== eid);
   });
   store.exercises = store.exercises.filter((e) => e.id !== eid);
   emit.days();
