@@ -191,6 +191,28 @@ export function migrateMuscleTaxonomy({ muscles, corrections, deleteIds }) {
   return batch.commit();
 }
 
+export function applyProgram3x({ creates, dayUpdates }) {
+  const batch = writeBatch(fs);
+  creates.forEach(({ id, name, primaryMuscleId, secondaryMuscleIds }) => {
+    batch.set(doc(fs, "exercises", id), {
+      name,
+      nameLower: normalize(name),
+      primaryMuscleId,
+      secondaryMuscleIds: secondaryMuscleIds || [],
+      otherMuscleIds: [],
+      similarIds: [],
+      refWeight: "",
+      note: "",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+  dayUpdates.forEach(({ dayId, entries }) => {
+    batch.update(doc(fs, "days", dayId), { entries });
+  });
+  return batch.commit();
+}
+
 // ---------- cardio types ----------
 
 export function addCardioType(name, order) {
@@ -344,6 +366,7 @@ export function saveLog(log) {
     programId: log.programId,
     dayId: log.dayId,
     exerciseId: log.exerciseId,
+    substitutedForId: log.substitutedForId || null,
     exerciseName: log.exerciseName,
     dayName: log.dayName,
     programName: log.programName,
@@ -466,6 +489,7 @@ export async function importBackup(data) {
       programId: l.programId || null,
       dayId: l.dayId || null,
       exerciseId: l.exerciseId,
+      substitutedForId: l.substitutedForId || null,
       exerciseName: l.exerciseName || "",
       dayName: l.dayName || "",
       programName: l.programName || "",

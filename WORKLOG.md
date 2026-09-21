@@ -2,6 +2,112 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
+## 2026-09-20 — v7.4: travas, swap-back de substituto, editar dia só-hoje, Séries por dia, histórico clicável, programa 3x novo
+
+### Request (Pedro) e scope locked (1 rodada AskUserQuestion + defaults aceitos)
+9 melhorias. Decisões: (1) máx 8 séries duro + validação de peso só ao Finalizar
+(>25% E >5kg vs último peso logado, fallback refWeight; sheet de conferência);
+(2) sugestão de swap-back na janela do CICLO do programa, 1 toque, nunca
+automática (exige campo novo substitutedForId no log); (3) "Editar dia" do
+Treino vira só-hoje e só LISTA de exercícios (draft __entries); ⚙ continua
+permanente p/ séries/reps; edição permanente completa vai p/ seção Treinos em
+Ajustes; (4) refWeight sobe p/ maior peso do treino ao Finalizar (nunca desce);
+(5) aba Séries ganha toggle Semana/Dia; (6) semanas já são seg-dom (zero
+trabalho); (7) nome de exercício clicável em Sessões + breakdown Séries → sheet
+de cadastro (deletado → exlog); (8) gráfico treinos/semana: 8 barras, labels
+"dd-dd/mm" ends-mid; (9) prog-fb-ul: entries dos 3 dias substituídas por
+migração one-time gym:prog3x-v7-4 (match por nameLower em runtime; reps = BASE
+da faixa; nomes atuais mantidos; criar só os 5 inexistentes; prog-ppl-ul
+intocado). Plano completo em .claude/plans/lets-do-a-few-glimmering-fog.md.
+
+### Execução (6 fases serializadas, 1 brief Codex cada)
+- Plugin Codex re-testado em 2026-09-20 a pedido do Pedro: 3 tentativas, 3
+  falhas com o mesmo `Rejected("approval request failed")` (rollouts morrem em
+  <1 min, 0 arquivos tocados; confirmado por watcher de git status de 10 min e
+  pela inspeção do rollout jsonl). Fallback `codex exec` em uso.
+- Fase 1 (`brief-v74-1-travas.md`) ENTREGUE via codex exec
+  (`scratchpad/codex-v74-1.log`): MAX_SETS=8 + clampTargetSets (draft, editor
+  de dia, ⚙, det-sets max=8), referenceWeightFor/flagSuspiciousSets,
+  reviewAndFinishWorkout + sheet empilhada #sheet-finish-check, auto-refWeight
+  (só sobe) no confirmFinishWorkout. Checks node A-K true, LOGIC_OK,
+  MAIN_PARSE_OK. Review Fable: diff limpo (updateExercise usa whitelist
+  exerciseData + updateDoc merge, sem risco a otherMuscleIds); verificado no
+  #debug: +série trava em 8; 90kg vs ref 30 abre "Conferir pesos" com a linha
+  "Supino máquina · Série 1 · 90kg (ref: 30kg)"; Voltar preserva o resumo;
+  confirmar grava log 8 sets + session e refWeight 30→90; sheets fecham.
+  Nota: botão Concluir continua exigindo >=1 exercício completo (regra
+  pré-existente, não alterada).
+- Fase 2 (`brief-v74-2-swapback.md`) ENTREGUE via codex exec
+  (`scratchpad/codex-v74-2.log`): logs ganham substitutedForId (saveLog,
+  importBackup, buildBackup, confirmFinishWorkout), cycleProgress expõe
+  currentCycleStart, swapBackSuggestion puro (com excludedLogKeys para o
+  fecho de ciclo no mesmo dia), linha .wc-suggest no card com botão Trocar
+  (stopPropagation + setDraftSubstitution). fakedb intocado (spread já
+  propaga o campo). Checks node S1-S5 true. Review Fable: diff limpo;
+  verificado no #debug: log de substituição carrega o campo, backup exporta
+  (logs antigos = null), sugestão renderiza no dia certo, Trocar aplica
+  __subs e o card mostra "no lugar de:". Pegadinha de verificação: o SW se
+  re-registra a cada load; limpar SW+caches antes de CADA rodada de teste.
+- Fase 3 (`brief-v74-3-dayedit.md`) ENTREGUE via codex exec
+  (`scratchpad/codex-v74-3.log`): fix draftHasExerciseSets (prefixo __),
+  effectiveDayEntries em 11 pontos do fluxo de hoje, setDraftEntries,
+  openDaySheet com scope today/permanent (hoje: sem nome do dia, sem excluir,
+  hint "vale só hoje"; submit grava __entries no draft e descarta sets/subs
+  dos removidos), reorder por arraste respeita o override, ⚙ permanece
+  permanente e sincroniza o override quando ele existe, renderDaysManager em
+  Ajustes (grupos por programa, linha por dia, abre sheet permanente).
+  Checks node A-F true. Verificado no #debug: remover exercício via "Editar
+  exercícios de hoje" muda só o override (6 vs 7 no doc), 6 cards, chip sem
+  estado "doing"; Ajustes > Treinos lista 2 programas / 8 dias e abre a
+  sheet completa.
+- Fase 4 (`brief-v74-4-series.md`) ENTREGUE via codex exec
+  (`scratchpad/codex-v74-4.log`): muscleSetsRange + dailyMuscleSets (weekly
+  vira wrapper), barChart ganha "ends-mid", gráfico Sessões com 8 semanas e
+  labels "dd-dd/mm" (verificado: 27-02/08, 17-23/08, 14-20/09), toggle
+  Semana/Dia na aba Séries (state.seriesView/seriesDayOffset, offsets
+  independentes, futuro bloqueado), nomes clicáveis na lista de Sessões e no
+  breakdown de Séries (abre sheet de cadastro; deletado abre exlog),
+  suppressClick pós-swipe no makeSwipeable. Checks node A-D true. Verificado
+  no #debug clique nos dois pontos abrindo a sheet certa. Pegadinha nova: o
+  import de módulo pode vir do cache HTTP mesmo com SW purgado; purge + 2
+  reloads (o install do SW busca com cache:"reload") resolve.
+- Fase 5 (`brief-v74-5-prog3x.md`) ENTREGUE via codex exec
+  (`scratchpad/codex-v74-5.log`): resolveProg3xEntries puro em logic.js
+  (matching por nameLower com candidatos em ordem, valida músculos antes de
+  criar, dedup de creates, erros bloqueiam a migração), db.applyProgram3x em
+  um writeBatch (fakedb espelha), applyProg3xMigration em main.js (flag
+  gym:prog3x-v7-4 NÃO persistida em #debug, prontidão muscles+exercises+days,
+  retry em erro). 7 checks node PASS (5 creates com o catálogo do seed,
+  idempotência). Verificado no #debug: Full Body 7 / Upper 8 / Lower 8 na
+  ordem e S×R da tabela do Pedro (reps = base da faixa), nomes atuais
+  preservados (ex.: Elevação lateral unilateral na polia, Panturrilha em pé
+  no Smith, Bíceps máquina), 5 exercícios novos com músculos certos, ppl-ul
+  intocado, flag null em #debug, reload duplo sem duplicatas.
+- Fase 6 (`brief-v74-6-bump.md`) ENTREGUE: APP_VERSION "v7.4" (main.js:59) e
+  CACHE "treino-v7.4" (sw.js:9); PRECACHE inalterado (nenhum arquivo novo no
+  lote).
+
+### Verificação transversal final (#debug, SW purgado)
+- v7.4 visível em Ajustes; 4 abas renderizam sem erro; backup exporta todas
+  as coleções e todo log carrega substitutedForId (null nos antigos).
+- Falso alarme documentado: no 1º reload após a fase 5, o console acusou
+  "db.applyProgram3x is not a function" porque o import de fakedb.js veio do
+  cache HTTP (módulo velho); o retry da migração aplicou no load seguinte.
+  Em produção não reproduz: o PRECACHE instala o shell inteiro por versão.
+
+### Fechamento v7.4 (2026-09-20)
+- 6 briefs Codex (codex exec gpt-5.6-sol xhigh, serializados), 6 entregues,
+  zero retrabalho estrutural; review Fable por fase (diff + #debug).
+- Riscos aceitos: (1) validação de peso usa referência = último log (fallback
+  refWeight), exercícios novos sem histórico não validam; (2) refWeight
+  auto só sobe, deload é manual; (3) sugestão swap-back só nasce de logs
+  gravados a partir do v7.4 (campo novo); (4) sets órfãos no draft se a
+  lista de hoje mudar sob treino aberto (migração one-time, aceito).
+- NÃO COMMITADO: aguardando ordem do Pedro. Deploy = ritual do sw.js
+  (commit + push GitHub Pages, fechar e reabrir o PWA duas vezes).
+- Briefs 2-5 prontos: brief-v74-2-swapback.md, brief-v74-3-dayedit.md,
+  brief-v74-4-series.md, brief-v74-5-prog3x.md.
+
 ## 2026-09-11 — v7.3: cardio fora do Treino, taxonomia muscular nova, exercício substituto
 
 ### Request (Pedro, mesma sessão após o push do v7.2)

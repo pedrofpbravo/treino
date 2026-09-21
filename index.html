@@ -101,7 +101,7 @@
           <span id="day-progress" class="hint"></span>
           <div class="day-action-buttons">
             <button id="btn-reorder" class="btn ghost small" type="button" aria-pressed="false">Ordenar</button>
-            <button id="btn-edit-day" class="btn ghost small" type="button">✎ Editar dia</button>
+            <button id="btn-edit-day" class="btn ghost small" type="button">✎ Editar hoje</button>
           </div>
         </div>
 
@@ -184,7 +184,11 @@
       <section id="tab-series" class="tab" hidden>
         <header class="tab-header">
           <h2>Séries</h2>
-          <div class="series-week-nav" aria-label="Navegação por semana">
+          <div id="series-view-seg" class="seg-control">
+            <button class="seg-btn active" data-view="week" type="button">Semana</button>
+            <button class="seg-btn" data-view="day" type="button">Dia</button>
+          </div>
+          <div class="series-week-nav" aria-label="Navegação de séries">
             <button id="series-prev" class="series-week-btn" type="button" aria-label="Semana anterior">‹</button>
             <span id="series-week-label" class="series-week-label"></span>
             <button id="series-next" class="series-week-btn" type="button" aria-label="Próxima semana">›</button>
@@ -217,6 +221,11 @@
             <input id="cardio-type-add-name" placeholder="Novo tipo" autocomplete="off" maxlength="40">
             <button class="btn small" type="submit">Adicionar</button>
           </form>
+        </div>
+
+        <h3 class="settings-h">Treinos</h3>
+        <div class="card">
+          <div id="days-manager"></div>
         </div>
 
         <h3 class="settings-h">Backup</h3>
@@ -361,8 +370,9 @@
   <!-- New / edit day -->
   <div id="sheet-day" class="sheet" hidden>
     <h3 id="sheet-day-title">Editar dia</h3>
+    <p id="day-scope-hint" class="hint" hidden>Vale só para o treino de hoje.</p>
     <form id="day-form">
-      <label class="field">
+      <label id="day-name-field" class="field">
         <span>Nome *</span>
         <input id="day-name" required maxlength="40" autocomplete="off" placeholder="ex.: Push">
       </label>
@@ -404,7 +414,7 @@
       <div class="field-row">
         <label class="field">
           <span>Séries</span>
-          <input id="det-sets" type="number" min="1" step="1" inputmode="numeric" required>
+          <input id="det-sets" type="number" min="1" max="8" step="1" inputmode="numeric" required>
         </label>
         <label class="field">
           <span>Reps</span>
@@ -441,6 +451,18 @@
       <span class="spacer"></span>
       <button type="button" class="btn ghost" data-close>Voltar</button>
       <button type="button" id="btn-finish-confirm" class="btn primary">Concluir treino</button>
+    </div>
+  </div>
+
+  <!-- Suspicious weight check (stacked over the finish summary) -->
+  <div id="sheet-finish-check" class="sheet sheet-stack" hidden>
+    <h3>Conferir pesos</h3>
+    <p class="hint">Estes valores destoam do peso de referência. Confira antes de concluir.</p>
+    <ul id="finish-check-list" class="rows"></ul>
+    <div class="sheet-actions">
+      <button type="button" id="btn-finish-check-back" class="btn ghost">Voltar e corrigir</button>
+      <span class="spacer"></span>
+      <button type="button" id="btn-finish-check-confirm" class="btn primary">Confirmar mesmo assim</button>
     </div>
   </div>
 

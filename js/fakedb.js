@@ -265,6 +265,32 @@ export async function migrateMuscleTaxonomy({ muscles, corrections, deleteIds })
   emit.exercises();
 }
 
+export async function applyProgram3x({ creates, dayUpdates }) {
+  creates.forEach(({ id: eid, name, primaryMuscleId, secondaryMuscleIds }) => {
+    const data = {
+      name,
+      nameLower: normalize(name),
+      primaryMuscleId,
+      secondaryMuscleIds: secondaryMuscleIds || [],
+      otherMuscleIds: [],
+      similarIds: [],
+      refWeight: "",
+      note: "",
+      createdAt: ts(),
+      updatedAt: ts(),
+    };
+    const exercise = store.exercises.find((item) => item.id === eid);
+    if (exercise) Object.assign(exercise, data);
+    else store.exercises.push({ id: eid, ...data });
+  });
+  dayUpdates.forEach(({ dayId, entries }) => {
+    const day = store.days.find((item) => item.id === dayId);
+    if (day) day.entries = entries.map((entry) => ({ ...entry }));
+  });
+  emit.exercises();
+  emit.days();
+}
+
 // ---------- cardio types ----------
 
 export async function addCardioType(name, order) {

@@ -58,7 +58,8 @@ export function lineChart(points) {
 }
 
 // Bar chart of {label, value} bars, value printed above each bar when > 0.
-// showLabels: "ends" prints only first/last x labels, "all" prints every one.
+// showLabels: "ends" prints first/last x labels, "ends-mid" also prints the
+// middle label, and "all" prints every one.
 export function barChart(bars, { showLabels = "all", color = "var(--brand)" } = {}) {
   const W = 340;
   const H = 150;
@@ -80,7 +81,11 @@ export function barChart(bars, { showLabels = "all", color = "var(--brand)" } = 
       b.value > 0
         ? `<text x="${cx.toFixed(1)}" y="${(yTop - 4).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="var(--muted)">${fmtVal(b.value)}</text>`
         : "";
-    const showLabel = showLabels === "all" || i === 0 || i === bars.length - 1;
+    const showLabel =
+      showLabels === "all" ||
+      i === 0 ||
+      i === bars.length - 1 ||
+      (showLabels === "ends-mid" && i === Math.floor((bars.length - 1) / 2));
     const label = showLabel
       ? `<text x="${cx.toFixed(1)}" y="${H - 5}" text-anchor="middle" font-size="9" fill="var(--muted)">${esc(b.label)}</text>`
       : "";

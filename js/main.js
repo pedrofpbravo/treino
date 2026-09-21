@@ -11,6 +11,7 @@ import * as fakeDb from "./fakedb.js";
 const db = location.hash === "#debug" ? fakeDb : realDb;
 import {
   normalize,
+  resolveProg3xEntries,
   todayStr,
   fmtDate,
   fmtDateShortMonth,
@@ -20,7 +21,9 @@ import {
   logDocId,
   prefillSets,
   resolveWorkoutExercise,
+  swapBackSuggestion,
   draftHasExerciseSets,
+  effectiveDayEntries,
   draftSetDone,
   draftAllDone,
   recordedSets,
@@ -30,6 +33,10 @@ import {
   normalizeDecimalInput,
   parseDecimal,
   parseRefWeight,
+  referenceWeightFor,
+  flagSuspiciousSets,
+  MAX_SETS,
+  clampTargetSets,
   targetLabel,
   setsLabel,
   groupSessions,
@@ -38,6 +45,7 @@ import {
   exerciseHistory,
   weeklyFrequency,
   weeklyMuscleSets,
+  dailyMuscleSets,
   weeklyCardio,
   dailyCardio,
   monthlyCardio,
@@ -48,7 +56,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.3";
+const APP_VERSION = "v7.4";
 
 const $ = (id) => document.getElementById(id);
 
@@ -132,6 +140,19 @@ function setDraftSubstitution(date, dayId, originalExerciseId, substituteExercis
   saveDrafts();
 }
 
+function setDraftEntries(date, dayId, entries) {
+  const key = draftKeyOf(date, dayId);
+  if (entries != null) {
+    if (!dayDraftFor(date, dayId)) drafts[key] = {};
+    drafts[key].__entries = entries;
+  } else {
+    const dayDraft = dayDraftFor(date, dayId);
+    if (dayDraft) delete dayDraft.__entries;
+    if (dayDraft && Object.keys(dayDraft).length === 0) delete drafts[key];
+  }
+  saveDrafts();
+}
+
 function discardDraftSets(date, dayId, exerciseId) {
   const key = draftKeyOf(date, dayId);
   const dayDraft = dayDraftFor(date, dayId);
@@ -175,11 +196,14 @@ const state = {
   muscleFilters: new Set(),
   histView: "sessoes",
   cardioChartView: "week",
+  seriesView: "week",
   seriesWeekOffset: 0,
+  seriesDayOffset: 0,
   seriesOpenMuscleId: null,
   progExerciseId: null,
   editingExerciseId: null,
   editingDayId: null,
+  dayEditScope: "permanent",
   detailExerciseId: null,
   detailEffectiveExerciseId: null,
   exlogExerciseId: null, // exercise shown in the full-log sheet
@@ -291,7 +315,8 @@ function renderTreino() {
   const chipsEl = $("day-chips");
   chipsEl.innerHTML = "";
   const days = state.programId ? daysOf(state.programId) : [];
-  const trainedDays = cycleProgress(state.programId, days, state.sessions).trained;
+  const progress = cycleProgress(state.programId, days, state.sessions);
+  const trainedDays = progress.trained;
   days.forEach((day) => {
     const chip = document.createElement("button");
     chip.type = "button";
@@ -318,12 +343,16 @@ function renderTreino() {
 
   $("btn-edit-day").hidden = !state.dayId;
   const reorderBtn = $("btn-reorder");
-  const canReorder = !!state.dayId && (currentDay()?.entries || []).length >= 2;
+  const activeDay = currentDay();
+  const activeEntries = activeDay
+    ? effectiveDayEntries(activeDay, dayDraftFor(today, activeDay.id))
+    : [];
+  const canReorder = activeEntries.length >= 2;
   if (!canReorder) state.reorderMode = false;
   reorderBtn.hidden = !canReorder;
   reorderBtn.classList.toggle("on", state.reorderMode);
   reorderBtn.setAttribute("aria-pressed", String(state.reorderMode));
-  renderWorkout();
+  renderWorkout(progress);
 }
 
 function openCardioSheet() {
@@ -410,7 +439,7 @@ function ensureWorkoutReminder(listEl) {
   return reminder;
 }
 
-function renderWorkout() {
+function renderWorkout(cycle = null) {
   const listEl = $("workout-list");
   const reminder = ensureWorkoutReminder(listEl);
   listEl.innerHTML = "";
@@ -434,13 +463,33 @@ function renderWorkout() {
     return;
   }
 
-  const entries = day.entries || [];
+  const dayDraft = dayDraftFor(today, day.id);
+  const entries = effectiveDayEntries(day, dayDraft);
   $("workout-empty").hidden = entries.length > 0;
 
+  const resolvedEntries = entries.map((entry) => ({
+    entry,
+    resolved: resolveWorkoutExercise(entry, dayDraft, state.exercisesById),
+  }));
+  const excludedIds = new Set(
+    resolvedEntries.map(({ resolved }) => resolved.exerciseId).filter(Boolean)
+  );
+  const progress = cycle || cycleProgress(day.programId, daysOf(day.programId), state.sessions);
+  const excludedLogKeys = new Set(
+    progress.completed?.date === today
+      ? (progress.completed.days || []).map(({ date, dayId }) => `${date}|${dayId}`)
+      : []
+  );
+  const suggestionContext = {
+    cycleStartDate: progress.currentCycleStart,
+    excludedIds,
+    excludedLogKeys,
+  };
+
   let done = 0;
-  entries.forEach((entry) => {
+  resolvedEntries.forEach(({ entry, resolved }) => {
     if (draftAllDone(draftSetsFor(today, day.id, entry.exerciseId))) done++;
-    listEl.appendChild(buildWorkoutCard(entry, day));
+    listEl.appendChild(buildWorkoutCard(entry, day, resolved, suggestionContext));
   });
   $("day-progress").textContent =
     entries.length > 0 ? `${done}/${entries.length} feitos hoje` : "";
@@ -524,12 +573,20 @@ function makeDraggableList(list) {
 
     const day = currentDay();
     if (!day) return;
-    const byExercise = new Map((day.entries || []).map((entry) => [entry.exerciseId, entry]));
+    const today = todayStr();
+    const dayDraft = dayDraftFor(today, day.id);
+    const currentEntries = effectiveDayEntries(day, dayDraft);
+    const byExercise = new Map(currentEntries.map((entry) => [entry.exerciseId, entry]));
     const entries = [...list.querySelectorAll(".workout-card")]
       .map((item) => byExercise.get(item.dataset.exerciseId))
       .filter(Boolean);
-    if (entries.some((entry, index) => entry !== day.entries[index])) {
-      db.updateDay(day.id, { name: day.name, entries }).catch(() => toast("Erro ao salvar ordem."));
+    if (entries.some((entry, index) => entry !== currentEntries[index])) {
+      if (Array.isArray(dayDraft?.__entries)) {
+        setDraftEntries(today, day.id, entries);
+        renderTreino();
+      } else {
+        db.updateDay(day.id, { name: day.name, entries }).catch(() => toast("Erro ao salvar ordem."));
+      }
     }
   };
 
@@ -571,9 +628,8 @@ function makeDraggableList(list) {
 // The card renders from the local draft, never from saved logs: "done"
 // (peach fill) needs every set checked, the in-progress accent edge needs
 // at least one; a merely opened card looks idle.
-function buildWorkoutCard(entry, day) {
+function buildWorkoutCard(entry, day, resolved, suggestionContext) {
   const today = todayStr();
-  const resolved = resolveWorkoutExercise(entry, dayDraftFor(today, day.id), state.exercisesById);
   const ex = resolved.exercise;
   const sets = draftSetsFor(today, day.id, entry.exerciseId);
   const started = !!sets;
@@ -664,6 +720,35 @@ function buildWorkoutCard(entry, day) {
 
   card.appendChild(top);
 
+  if (!started && !resolved.substituted && !resolved.missingSubstitute) {
+    const suggestion = swapBackSuggestion({
+      entryExerciseId: entry.exerciseId,
+      logs: state.logs,
+      cycleStartDate: suggestionContext.cycleStartDate,
+      exercisesById: state.exercisesById,
+      excludedIds: suggestionContext.excludedIds,
+      excludedLogKeys: suggestionContext.excludedLogKeys,
+    });
+    if (suggestion) {
+      const suggest = document.createElement("div");
+      suggest.className = "wc-suggest";
+      const text = document.createElement("span");
+      text.textContent =
+        `Sugestão: fazer ${suggestion.originalName} no lugar de ${ex?.name || entry.exerciseId} hoje`;
+      const swap = document.createElement("button");
+      swap.type = "button";
+      swap.textContent = "Trocar";
+      swap.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setDraftSubstitution(todayStr(), day.id, entry.exerciseId, suggestion.originalId);
+        renderTreino();
+        toast(`Trocado por ${suggestion.originalName}`);
+      });
+      suggest.append(text, swap);
+      card.appendChild(suggest);
+    }
+  }
+
   card.addEventListener("click", (e) => {
     if (state.reorderMode) return;
     if (card.dataset.suppressClick) return;
@@ -702,16 +787,18 @@ function buildWorkoutCard(entry, day) {
 
 function openDetailSheet(exerciseId) {
   const day = currentDay();
-  const entry = (day?.entries || []).find((e) => e.exerciseId === exerciseId);
+  const today = todayStr();
+  const dayDraft = day ? dayDraftFor(today, day.id) : null;
+  const entry = effectiveDayEntries(day, dayDraft).find((e) => e.exerciseId === exerciseId);
   if (!day || !entry) return;
-  const resolved = resolveWorkoutExercise(entry, dayDraftFor(todayStr(), day.id), state.exercisesById);
+  const resolved = resolveWorkoutExercise(entry, dayDraft, state.exercisesById);
   const ex = resolved.exercise;
   if (!ex) return;
   state.detailExerciseId = exerciseId;
   state.detailEffectiveExerciseId = resolved.exerciseId;
   $("sheet-detail-title").textContent = ex.name;
   $("detail-muscles").textContent = muscleSummary(ex);
-  $("det-sets").value = entry.targetSets || 3;
+  $("det-sets").value = clampTargetSets(entry.targetSets || 3);
   $("det-reps").value = entryReps(entry);
   $("det-refweight").value = ex.refWeight || "";
   $("det-note").value = ex.note || "";
@@ -767,7 +854,8 @@ function chooseSubstituteToday(substituteExerciseId) {
   const originalExerciseId = state.detailExerciseId;
   if (!day || !originalExerciseId || !substituteExerciseId) return;
   const select = $("detail-substitute-select");
-  if ((day.entries || []).some((entry) => entry.exerciseId === substituteExerciseId)) {
+  if (effectiveDayEntries(day, dayDraftFor(todayStr(), day.id))
+    .some((entry) => entry.exerciseId === substituteExerciseId)) {
     select.value = "";
     toast("Esse exercício já faz parte do dia.");
     return;
@@ -809,18 +897,28 @@ function restoreOriginalToday() {
 function submitDetailForm(e) {
   e.preventDefault();
   const day = currentDay();
-  const entry = (day?.entries || []).find((item) => item.exerciseId === state.detailExerciseId);
+  const today = todayStr();
+  const dayDraft = day ? dayDraftFor(today, day.id) : null;
+  const entry = effectiveDayEntries(day, dayDraft)
+    .find((item) => item.exerciseId === state.detailExerciseId);
   if (!day || !entry) return;
-  const resolved = resolveWorkoutExercise(entry, dayDraftFor(todayStr(), day.id), state.exercisesById);
+  const resolved = resolveWorkoutExercise(entry, dayDraft, state.exercisesById);
   const ex = resolved.exercise;
   if (!ex) return;
 
-  const targetSets = Math.max(1, Math.floor(Number($("det-sets").value)) || 3);
+  const targetSets = clampTargetSets($("det-sets").value);
   const reps = Math.max(1, Math.floor(Number($("det-reps").value)) || 10);
   const entries = (day.entries || []).map((en) =>
     en.exerciseId === entry.exerciseId ? { exerciseId: entry.exerciseId, targetSets, reps } : en
   );
   db.updateDay(day.id, { name: day.name, entries }).catch(() => toast("Erro ao salvar."));
+  if (Array.isArray(dayDraft?.__entries) &&
+      dayDraft.__entries.some((en) => en.exerciseId === entry.exerciseId)) {
+    const draftEntries = dayDraft.__entries.map((en) =>
+      en.exerciseId === entry.exerciseId ? { exerciseId: entry.exerciseId, targetSets, reps } : en
+    );
+    setDraftEntries(today, day.id, draftEntries);
+  }
 
   db.updateExercise(ex.id, {
     name: ex.name,
@@ -952,7 +1050,8 @@ function openFinishSheet() {
   if (!day) return;
   const today = todayStr();
   const dayDraft = dayDraftFor(today, day.id);
-  const items = (day.entries || [])
+  const entries = effectiveDayEntries(day, dayDraft);
+  const items = entries
     .map((en) => {
       const sets = draftSetsFor(today, day.id, en.exerciseId);
       const recorded = recordedSets(sets);
@@ -971,7 +1070,7 @@ function openFinishSheet() {
   const session = finishedSession(today, day.id);
 
   $("finish-sub").textContent =
-    `${fmtDateFull(today)} · ${day.name} · ${done} de ${(day.entries || []).length} exercícios`;
+    `${fmtDateFull(today)} · ${day.name} · ${done} de ${entries.length} exercícios`;
 
   const ul = $("finish-list");
   ul.innerHTML = "";
@@ -1019,17 +1118,59 @@ function toggleWorkout() {
   openFinishSheet();
 }
 
+function buildFinishPlans(day, today) {
+  const dayDraft = dayDraftFor(today, day.id);
+  return effectiveDayEntries(day, dayDraft).map((entry) => ({
+    entry,
+    resolved: resolveWorkoutExercise(entry, dayDraft, state.exercisesById),
+    recorded: recordedSets(draftSetsFor(today, day.id, entry.exerciseId)),
+  }));
+}
+
+function reviewAndFinishWorkout() {
+  const day = currentDay();
+  if (!day) return;
+  const today = todayStr();
+  const suspicious = [];
+
+  buildFinishPlans(day, today).forEach(({ resolved, recorded }) => {
+    if (recorded.length === 0 || resolved.missingSubstitute) return;
+    const ex = resolved.exercise;
+    const reference = referenceWeightFor(state.logs, resolved.exerciseId, today, ex?.refWeight);
+    flagSuspiciousSets(recorded, reference).forEach(({ index, weight }) => {
+      suspicious.push({
+        name: ex?.name || resolved.exerciseId,
+        series: index + 1,
+        weight,
+        reference,
+      });
+    });
+  });
+
+  if (suspicious.length === 0) {
+    confirmFinishWorkout();
+    return;
+  }
+
+  const list = $("finish-check-list");
+  list.innerHTML = "";
+  suspicious.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "row-line";
+    li.textContent =
+      `${item.name} · Série ${item.series} · ${String(item.weight)}kg ` +
+      `(ref: ${String(item.reference)}kg)`;
+    list.appendChild(li);
+  });
+  openSheet("sheet-finish-check");
+}
+
 function confirmFinishWorkout() {
   const day = currentDay();
   if (!day) return;
   const program = currentProgram();
   const today = todayStr();
-  const dayDraft = dayDraftFor(today, day.id);
-  const plans = (day.entries || []).map((entry) => ({
-    entry,
-    resolved: resolveWorkoutExercise(entry, dayDraft, state.exercisesById),
-    recorded: recordedSets(draftSetsFor(today, day.id, entry.exerciseId)),
-  }));
+  const plans = buildFinishPlans(day, today);
   const protectedExerciseIds = new Set(
     plans
       .filter(({ resolved }) => !resolved.missingSubstitute)
@@ -1072,11 +1213,28 @@ function confirmFinishWorkout() {
       programId: program?.id || day.programId,
       dayId: day.id,
       exerciseId: resolved.exerciseId,
+      substitutedForId: resolved.substituted ? resolved.originalExerciseId : null,
       exerciseName: ex?.name || resolved.exerciseId,
       dayName: day.name,
       programName: program?.name || "",
       sets: recorded,
     }).catch(() => toast("Erro ao salvar exercícios do treino."));
+
+    const weights = recorded
+      .map((set) => set.weight)
+      .filter((weight) => weight !== null && Number.isFinite(weight));
+    const top = weights.length > 0 ? Math.max(...weights) : null;
+    const currentRefWeight = parseRefWeight(ex?.refWeight);
+    if (ex && top !== null && (currentRefWeight === null || top > currentRefWeight)) {
+      db.updateExercise(ex.id, {
+        name: ex.name,
+        primaryMuscleId: ex.primaryMuscleId,
+        secondaryMuscleIds: ex.secondaryMuscleIds || [],
+        similarIds: ex.similarIds || [],
+        refWeight: String(top),
+        note: ex.note || "",
+      }).catch(() => toast("Erro ao atualizar peso de referência."));
+    }
   });
   const pendingSessionId = sessionId(today, day.id);
   pendingFinishToastId = pendingSessionId;
@@ -1202,7 +1360,9 @@ function buildSetsEditor(entry, day, sets) {
   add.type = "button";
   add.className = "btn-add-set";
   add.textContent = "＋ série";
+  add.disabled = sets.length >= MAX_SETS;
   add.addEventListener("click", () => {
+    if (sets.length >= MAX_SETS) return;
     const prev = sets[sets.length - 1];
     sets.push({ reps: prev?.reps ?? entryReps(entry), weight: prev?.weight ?? null, done: false });
     syncCollapsedState();
@@ -1215,15 +1375,25 @@ function buildSetsEditor(entry, day, sets) {
 
 // ---------- day sheet (new / edit) ----------
 
-function openDaySheet(dayId) {
+function openDaySheet(dayId, { scope = "permanent" } = {}) {
   state.editingDayId = dayId || null;
   const day = dayId ? state.days.find((d) => d.id === dayId) : null;
-  $("sheet-day-title").textContent = day ? "Editar dia" : "Novo dia";
+  state.dayEditScope = scope === "today" && day ? "today" : "permanent";
+  const todayOnly = state.dayEditScope === "today";
+  $("sheet-day-title").textContent = todayOnly
+    ? "Editar exercícios de hoje"
+    : day ? "Editar dia" : "Novo dia";
+  $("day-scope-hint").hidden = !todayOnly;
+  $("day-name-field").hidden = todayOnly;
   $("day-name").value = day ? day.name : "";
-  state.draftEntries = (day?.entries || []).map((e) => ({ ...e }));
+  state.draftEntries = (
+    todayOnly
+      ? effectiveDayEntries(day, dayDraftFor(todayStr(), day.id))
+      : day?.entries || []
+  ).map((entry) => ({ ...entry }));
   $("day-ex-search").value = "";
   $("day-ex-results").hidden = true;
-  $("btn-day-delete").hidden = !day;
+  $("btn-day-delete").hidden = todayOnly || !day;
   renderDayEntries();
   openSheet("sheet-day");
 }
@@ -1239,20 +1409,31 @@ function renderDayEntries() {
     name.className = "entry-name";
     name.textContent = state.exercisesById.get(entry.exerciseId)?.name || "(removido)";
 
-    const numInput = (value, min, onChange) => {
+    const numInput = (value, min, onChange, max = null, clamp = null) => {
       const input = document.createElement("input");
       input.type = "number";
       input.min = String(min);
+      if (max !== null) input.max = String(max);
       input.step = "1";
       input.inputMode = "numeric";
       input.value = value;
       input.addEventListener("change", () => {
         const v = Math.floor(Number(input.value));
-        onChange(Number.isFinite(v) ? Math.max(min, v) : min);
+        const next = clamp
+          ? clamp(input.value)
+          : Number.isFinite(v) ? Math.max(min, v) : min;
+        if (clamp) input.value = String(next);
+        onChange(next);
       });
       return input;
     };
-    const sets = numInput(entry.targetSets, 1, (v) => (entry.targetSets = v));
+    const sets = numInput(
+      clampTargetSets(entry.targetSets),
+      1,
+      (v) => (entry.targetSets = v),
+      MAX_SETS,
+      clampTargetSets
+    );
     const reps = numInput(entryReps(entry), 1, (v) => (entry.reps = v));
 
     const x1 = document.createElement("span");
@@ -1331,13 +1512,31 @@ function renderDayExResults() {
 
 function submitDayForm(e) {
   e.preventDefault();
-  const name = $("day-name").value.trim();
-  if (!name || !state.programId) return;
   const entries = state.draftEntries.map((en) => ({
     exerciseId: en.exerciseId,
-    targetSets: Math.max(1, Number(en.targetSets) || 1),
+    targetSets: clampTargetSets(en.targetSets),
     reps: entryReps(en),
   }));
+  if (state.dayEditScope === "today") {
+    const day = state.days.find((item) => item.id === state.editingDayId);
+    if (!day) return;
+    const today = todayStr();
+    const dayDraft = dayDraftFor(today, day.id);
+    const keptExerciseIds = new Set(entries.map((entry) => entry.exerciseId));
+    effectiveDayEntries(day, dayDraft)
+      .filter((entry) => !keptExerciseIds.has(entry.exerciseId))
+      .forEach((entry) => {
+        discardDraftSets(today, day.id, entry.exerciseId);
+        setDraftSubstitution(today, day.id, entry.exerciseId, null);
+      });
+    setDraftEntries(today, day.id, entries);
+    closeSheets();
+    renderTreino();
+    return;
+  }
+
+  const name = $("day-name").value.trim();
+  if (!name || !state.programId) return;
   let op;
   if (state.editingDayId) {
     op = db.updateDay(state.editingDayId, { name, entries });
@@ -1830,6 +2029,10 @@ function makeSwipeable(row, onDelete) {
   row.addEventListener("touchend", () => {
     if (!dragging) return;
     dragging = false;
+    if (Math.abs(dx) > 6) {
+      row.dataset.suppressClick = "true";
+      setTimeout(() => delete row.dataset.suppressClick, 400);
+    }
     const base = row.classList.contains("open") ? OPEN_X : 0;
     if (base + dx < OPEN_X / 2) {
       content.style.transform = `translateX(${OPEN_X}px)`;
@@ -1856,16 +2059,40 @@ function fmtSeriesNumber(value) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function openExerciseFromHistory(exerciseId) {
+  if (!exerciseId) return;
+  if (state.exercisesById.has(exerciseId)) openExerciseSheet(exerciseId);
+  else openExerciseLog(exerciseId);
+}
+
 function renderSeries() {
   if (!$("tab-series")) return;
 
-  const currentWeek = weekStartStr(todayStr());
-  const weekStart = addDaysStr(currentWeek, state.seriesWeekOffset * 7);
-  const weekEnd = addDaysStr(weekStart, 6);
-  $("series-week-label").textContent = `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}`;
-  $("series-next").disabled = state.seriesWeekOffset >= 0;
+  const isDay = state.seriesView === "day";
+  document.querySelectorAll("#series-view-seg .seg-btn").forEach((button) =>
+    button.classList.toggle("active", button.dataset.view === state.seriesView)
+  );
 
-  const rows = weeklyMuscleSets(state.logs, state.exercisesById, weekStart)
+  let muscleSets;
+  if (isDay) {
+    const date = addDaysStr(todayStr(), state.seriesDayOffset);
+    $("series-week-label").textContent = fmtDateFull(date);
+    $("series-next").disabled = state.seriesDayOffset >= 0;
+    $("series-prev").setAttribute("aria-label", "Dia anterior");
+    $("series-next").setAttribute("aria-label", "Próximo dia");
+    muscleSets = dailyMuscleSets(state.logs, state.exercisesById, date);
+  } else {
+    const currentWeek = weekStartStr(todayStr());
+    const weekStart = addDaysStr(currentWeek, state.seriesWeekOffset * 7);
+    const weekEnd = addDaysStr(weekStart, 6);
+    $("series-week-label").textContent = `${fmtDate(weekStart)} - ${fmtDate(weekEnd)}`;
+    $("series-next").disabled = state.seriesWeekOffset >= 0;
+    $("series-prev").setAttribute("aria-label", "Semana anterior");
+    $("series-next").setAttribute("aria-label", "Próxima semana");
+    muscleSets = weeklyMuscleSets(state.logs, state.exercisesById, weekStart);
+  }
+
+  const rows = muscleSets
     .filter((muscle) => muscle.total > 0)
     .map((muscle) => ({ ...muscle, name: muscleName(muscle.muscleId) || muscle.muscleId }))
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name, "pt"));
@@ -1874,6 +2101,9 @@ function renderSeries() {
   list.innerHTML = "";
   $("series-card").hidden = rows.length === 0;
   $("series-empty").hidden = rows.length > 0;
+  $("series-empty").textContent = isDay
+    ? "Nenhuma série registrada neste dia."
+    : "Nenhuma série registrada nesta semana.";
   if (!rows.some((muscle) => muscle.muscleId === state.seriesOpenMuscleId)) {
     state.seriesOpenMuscleId = null;
   }
@@ -1908,13 +2138,15 @@ function renderSeries() {
     [...muscle.exercises]
       .sort((a, b) => b.contribution - a.contribution || a.name.localeCompare(b.name, "pt"))
       .forEach((exercise) => {
-        const detail = document.createElement("div");
-        detail.className = "series-breakdown-row";
+        const detail = document.createElement("button");
+        detail.type = "button";
+        detail.className = "series-breakdown-row exercise-link";
         const setLabel = exercise.sets === 1 ? "série" : "séries";
         const contribution = fmtSeriesNumber(exercise.contribution);
         detail.textContent = exercise.factor === 1
           ? `${exercise.name} · ${exercise.sets} ${setLabel} · +${contribution}`
           : `${exercise.name} · ${exercise.sets} ${setLabel} · ×0.5 = +${contribution}`;
+        detail.addEventListener("click", () => openExerciseFromHistory(exercise.exerciseId));
         breakdown.appendChild(detail);
       });
 
@@ -1938,10 +2170,13 @@ function renderHist() {
 }
 
 function renderSessions() {
-  const weeks = weeklyFrequency(state.logs, 12, todayStr(), state.cardio.map((entry) => entry.date));
+  const weeks = weeklyFrequency(state.logs, 8, todayStr(), state.cardio.map((entry) => entry.date));
   $("freq-chart").innerHTML = barChart(
-    weeks.map((w) => ({ label: w.label, value: w.count })),
-    { showLabels: "ends" }
+    weeks.map((w) => ({
+      label: `${w.start.slice(8)}-${fmtDate(addDaysStr(w.start, 6))}`,
+      value: w.count,
+    })),
+    { showLabels: "ends-mid" }
   );
 
   const listEl = $("sessions-list");
@@ -1970,9 +2205,15 @@ function renderSessions() {
       li.className = "item-row session-log-row";
       const main = document.createElement("div");
       main.className = "item-main";
-      const name = document.createElement("span");
-      name.className = "item-name";
+      const name = document.createElement("button");
+      name.type = "button";
+      name.className = "item-name exercise-link";
       name.textContent = log.exerciseName || "(exercício)";
+      name.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (li.dataset.suppressClick) return;
+        openExerciseFromHistory(log.exerciseId);
+      });
       main.appendChild(name);
       const sets = document.createElement("span");
       sets.className = "item-sub session-sets";
@@ -2284,6 +2525,48 @@ function renderCardioTypesManager() {
   });
 }
 
+function renderDaysManager() {
+  const manager = $("days-manager");
+  manager.innerHTML = "";
+  state.programs.forEach((program) => {
+    const group = document.createElement("section");
+    group.className = "days-manager-group";
+
+    const subtitle = document.createElement("h4");
+    subtitle.className = "days-manager-program";
+    subtitle.textContent = program.name;
+
+    const list = document.createElement("div");
+    list.className = "days-manager-list";
+    const days = daysOf(program.id);
+    days.forEach((day) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "row-line days-manager-row";
+      row.addEventListener("click", () => openDaySheet(day.id, { scope: "permanent" }));
+
+      const name = document.createElement("span");
+      name.className = "row-name";
+      name.textContent = day.name;
+      const arrow = document.createElement("span");
+      arrow.className = "days-manager-arrow";
+      arrow.textContent = "›";
+      row.append(name, arrow);
+      list.appendChild(row);
+    });
+
+    if (days.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "hint days-manager-empty";
+      empty.textContent = "Nenhum dia.";
+      list.appendChild(empty);
+    }
+
+    group.append(subtitle, list);
+    manager.appendChild(group);
+  });
+}
+
 // ---------- backup ----------
 
 function buildBackup() {
@@ -2324,6 +2607,7 @@ function buildBackup() {
       programId: l.programId || null,
       dayId: l.dayId || null,
       exerciseId: l.exerciseId,
+      substitutedForId: l.substitutedForId || null,
       exerciseName: l.exerciseName || "",
       dayName: l.dayName || "",
       programName: l.programName || "",
@@ -2473,6 +2757,7 @@ const CARDIO_BIKES_KEY = "gym:cardio-bikes-v6-1";
 const FINISH_BACKFILL_KEY = "gym:session-backfill-v6-5";
 const MUSCLE_REVIEW_KEY = "gym:muscle-review-v7-2";
 const MUSCLE_TAXONOMY_KEY = "gym:muscle-taxonomy-v7-3";
+const PROG3X_KEY = "gym:prog3x-v7-4";
 const FINISH_BACKFILL_DATES = ["2026-09-05"];
 const MUSCLE_TAXONOMY = [
   ["mus-peito", "Peito"],
@@ -2534,8 +2819,10 @@ let smithSeedStarted = false;
 let cardioBikesStarted = false;
 let finishBackfillStarted = false;
 let muscleTaxonomyStarted = false;
+let prog3xStarted = false;
 let muscleSnapshotReady = false;
 let exerciseSnapshotReady = false;
+let daysSnapshotReady = false;
 
 async function migrateRefWeights(exercises) {
   if (refWeightMigrationStarted || localStorage.getItem(REFWEIGHT_MIGRATION_KEY)) return;
@@ -2701,6 +2988,50 @@ async function applyMuscleTaxonomy() {
   }
 }
 
+async function applyProg3xMigration() {
+  const isDebug = location.hash === "#debug";
+  if (prog3xStarted || (!isDebug && localStorage.getItem(PROG3X_KEY))) return;
+  if (!muscleSnapshotReady || !exerciseSnapshotReady || !daysSnapshotReady) return;
+  prog3xStarted = true;
+
+  const { creates, entriesByDay, errors } = resolveProg3xEntries(
+    state.exercises,
+    state.muscles
+  );
+  if (errors.length > 0) {
+    console.error("Migração do programa 3x não aplicada:", errors);
+    prog3xStarted = false;
+    toast("Erro ao atualizar o programa 3x.");
+    return;
+  }
+
+  const musclesByName = new Map(
+    state.muscles.map((muscle) => [normalize(muscle.name), muscle.id])
+  );
+  const exerciseCreates = creates.map((exercise) => ({
+    id: exercise.id,
+    name: exercise.name,
+    primaryMuscleId: musclesByName.get(normalize(exercise.primaryMuscleName)),
+    secondaryMuscleIds: exercise.secondaryMuscleNames.map((name) =>
+      musclesByName.get(normalize(name))
+    ),
+  }));
+  const existingDayIds = new Set(state.days.map((day) => day.id));
+  const dayUpdates = Object.entries(entriesByDay)
+    .filter(([dayId]) => existingDayIds.has(dayId))
+    .map(([dayId, entries]) => ({ dayId, entries }));
+
+  try {
+    await db.applyProgram3x({ creates: exerciseCreates, dayUpdates });
+    if (location.hash !== "#debug") localStorage.setItem(PROG3X_KEY, "1");
+    toast("Programa 3x atualizado.");
+  } catch (error) {
+    console.error("Erro na migração do programa 3x:", error);
+    prog3xStarted = false;
+    toast("Erro ao atualizar o programa 3x.");
+  }
+}
+
 // Sessions finished before v6.5 left no record: "Finalizar treino" used to
 // write nothing, so a day trained with one exercise left over never got its
 // check. Marks those days as finished from the logs they do have, so the id
@@ -2740,6 +3071,7 @@ function onMuscles(muscles) {
   state.muscles = sortByOrder(muscles);
   muscleSnapshotReady = true;
   applyMuscleTaxonomy();
+  applyProg3xMigration();
   renderMuscleChips();
   renderMusclesManager();
   renderExercises();
@@ -2760,6 +3092,7 @@ function onExercises(exercises) {
   fixNoteDashes(exercises);
   seedSmithExercise(exercises);
   applyMuscleTaxonomy();
+  applyProg3xMigration();
   renderExercises();
   renderTreino();
   renderSeries();
@@ -2773,12 +3106,16 @@ function onPrograms(programs) {
   }
   state.programs = sortByOrder(programs);
   renderProgramsList();
+  renderDaysManager();
   renderTreino();
 }
 
 function onDays(days) {
   state.days = days;
+  daysSnapshotReady = true;
+  applyProg3xMigration();
   renderProgramsList();
+  renderDaysManager();
   renderTreino();
 }
 
@@ -3014,14 +3351,21 @@ function wire() {
     openSheet("sheet-programs");
   });
   $("btn-edit-day").addEventListener("click", () => {
-    if (state.dayId) openDaySheet(state.dayId);
+    if (state.dayId) openDaySheet(state.dayId, { scope: "today" });
   });
   $("btn-reorder").addEventListener("click", () => {
     state.reorderMode = !state.reorderMode;
     renderTreino();
   });
   $("btn-finish-workout").addEventListener("click", toggleWorkout);
-  $("btn-finish-confirm").addEventListener("click", confirmFinishWorkout);
+  $("btn-finish-confirm").addEventListener("click", reviewAndFinishWorkout);
+  $("btn-finish-check-back").addEventListener("click", () => {
+    $("sheet-finish-check").hidden = true;
+  });
+  $("btn-finish-check-confirm").addEventListener("click", () => {
+    $("sheet-finish-check").hidden = true;
+    confirmFinishWorkout();
+  });
   $("btn-finish-reopen").addEventListener("click", unfinishWorkout);
   $("btn-add-cardio").addEventListener("click", openCardioSheet);
   $("cardio-type").addEventListener("change", updateCardioTypeNote);
@@ -3112,13 +3456,25 @@ function wire() {
   });
 
   // séries
+  document.querySelectorAll("#series-view-seg .seg-btn").forEach((button) =>
+    button.addEventListener("click", () => {
+      state.seriesView = button.dataset.view;
+      state.seriesOpenMuscleId = null;
+      renderSeries();
+    })
+  );
   $("series-prev").addEventListener("click", () => {
-    state.seriesWeekOffset--;
+    if (state.seriesView === "day") state.seriesDayOffset--;
+    else state.seriesWeekOffset--;
     state.seriesOpenMuscleId = null;
     renderSeries();
   });
   $("series-next").addEventListener("click", () => {
-    state.seriesWeekOffset = Math.min(0, state.seriesWeekOffset + 1);
+    if (state.seriesView === "day") {
+      state.seriesDayOffset = Math.min(0, state.seriesDayOffset + 1);
+    } else {
+      state.seriesWeekOffset = Math.min(0, state.seriesWeekOffset + 1);
+    }
     state.seriesOpenMuscleId = null;
     renderSeries();
   });

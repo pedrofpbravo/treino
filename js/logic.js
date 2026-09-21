@@ -10,6 +10,193 @@ export function normalize(text) {
     .trim();
 }
 
+const PROG3X_LATERAL_RAISE = {
+  key: "lateral-raise",
+  candidates: ["Elevação lateral na máquina", "Elevação lateral unilateral na polia"],
+  create: {
+    id: "ex-elevacao_lateral_maquina",
+    name: "Elevação lateral na máquina",
+    primaryMuscleName: "Ombro lateral",
+    secondaryMuscleNames: [],
+  },
+};
+
+const PROG3X_SLOTS = {
+  "day-fb-ul-fullbody": [
+    { candidates: ["Leg press 45°"], targetSets: 3, reps: 6 },
+    { candidates: ["Supino máquina"], targetSets: 3, reps: 6 },
+    {
+      candidates: ["Remada baixa na máquina com apoio no peito"],
+      create: {
+        id: "ex-remada_baixa_apoio_peito",
+        name: "Remada baixa na máquina com apoio no peito",
+        primaryMuscleName: "Dorsais",
+        secondaryMuscleNames: ["Bíceps", "Costas superiores"],
+      },
+      targetSets: 2,
+      reps: 8,
+    },
+    { candidates: ["Puxada alta máquina"], targetSets: 2, reps: 8 },
+    { candidates: ["Cadeira flexora bilateral"], targetSets: 2, reps: 10 },
+    { ...PROG3X_LATERAL_RAISE, targetSets: 2, reps: 12 },
+    {
+      candidates: ["Panturrilha em pé na máquina", "Panturrilha em pé no Smith"],
+      create: {
+        id: "ex-panturrilha_em_pe_maquina",
+        name: "Panturrilha em pé na máquina",
+        primaryMuscleName: "Panturrilha",
+        secondaryMuscleNames: [],
+      },
+      targetSets: 2,
+      reps: 8,
+    },
+  ],
+  "day-fb-ul-upper": [
+    { candidates: ["Supino inclinado com halteres"], targetSets: 3, reps: 5 },
+    { candidates: ["Remada alta articulada máquina"], targetSets: 3, reps: 6 },
+    { candidates: ["Puxada alta máquina"], targetSets: 3, reps: 8 },
+    { candidates: ["Crucifixo máquina"], targetSets: 3, reps: 10 },
+    { ...PROG3X_LATERAL_RAISE, targetSets: 4, reps: 12 },
+    {
+      candidates: ["Crucifixo inverso no peck deck"],
+      create: {
+        id: "ex-crucifixo_inverso_peck_deck",
+        name: "Crucifixo inverso no peck deck",
+        primaryMuscleName: "Ombro posterior",
+        secondaryMuscleNames: ["Costas superiores"],
+      },
+      targetSets: 2,
+      reps: 12,
+    },
+    {
+      candidates: ["Rosca Scott na máquina", "Bíceps máquina", "Bíceps Scott unilateral com halter"],
+      create: {
+        id: "ex-rosca_scott_maquina",
+        name: "Rosca Scott na máquina",
+        primaryMuscleName: "Bíceps",
+        secondaryMuscleNames: [],
+      },
+      targetSets: 2,
+      reps: 8,
+    },
+    {
+      candidates: ["Extensão de tríceps acima da cabeça na polia", "Tríceps francês unilateral com halter"],
+      create: {
+        id: "ex-triceps_overhead_polia",
+        name: "Extensão de tríceps acima da cabeça na polia",
+        primaryMuscleName: "Tríceps",
+        secondaryMuscleNames: [],
+      },
+      targetSets: 2,
+      reps: 10,
+    },
+  ],
+  "day-fb-ul-lower": [
+    {
+      candidates: ["Hack squat"],
+      create: {
+        id: "ex-hack_squat",
+        name: "Hack squat",
+        primaryMuscleName: "Quadríceps",
+        secondaryMuscleNames: ["Glúteos"],
+      },
+      targetSets: 3,
+      reps: 5,
+    },
+    { candidates: ["RDL / Stiff"], targetSets: 3, reps: 6 },
+    { candidates: ["Agachamento búlgaro"], targetSets: 2, reps: 8 },
+    { candidates: ["Cadeira flexora bilateral"], targetSets: 3, reps: 10 },
+    { candidates: ["Cadeira extensora"], targetSets: 2, reps: 10 },
+    {
+      candidates: ["Panturrilha sentada"],
+      create: {
+        id: "ex-panturrilha_sentada",
+        name: "Panturrilha sentada",
+        primaryMuscleName: "Panturrilha",
+        secondaryMuscleNames: [],
+      },
+      targetSets: 4,
+      reps: 8,
+    },
+    { candidates: ["Abdominal máquina"], targetSets: 2, reps: 10 },
+    {
+      candidates: ["Reverse crunch no banco"],
+      create: {
+        id: "ex-reverse_crunch_banco",
+        name: "Reverse crunch no banco",
+        primaryMuscleName: "Abdômen",
+        secondaryMuscleNames: [],
+      },
+      targetSets: 2,
+      reps: 12,
+    },
+  ],
+};
+
+export function resolveProg3xEntries(exercises, muscles) {
+  const exercisesByName = new Map(
+    (exercises || []).map((exercise) => [exercise.nameLower, exercise])
+  );
+  const musclesByName = new Map(
+    (muscles || []).map((muscle) => [normalize(muscle.name), muscle])
+  );
+  const createsById = new Map();
+  const resolvedSlots = new Map();
+  const errors = [];
+  const errorKeys = new Set();
+
+  const addError = (key, message) => {
+    if (errorKeys.has(key)) return;
+    errorKeys.add(key);
+    errors.push(message);
+  };
+
+  const resolveSlot = (slot) => {
+    const slotKey = slot.key || slot.create?.id || slot.candidates.map(normalize).join("|");
+    if (resolvedSlots.has(slotKey)) return resolvedSlots.get(slotKey);
+
+    const match = slot.candidates
+      .map((candidate) => exercisesByName.get(normalize(candidate)))
+      .find(Boolean);
+    if (match) {
+      resolvedSlots.set(slotKey, match.id);
+      return match.id;
+    }
+
+    if (!slot.create) {
+      addError(`exercise:${slotKey}`, `Exercício não encontrado: ${slot.candidates.join(" / ")}.`);
+      resolvedSlots.set(slotKey, null);
+      return null;
+    }
+
+    const requiredMuscles = [slot.create.primaryMuscleName, ...slot.create.secondaryMuscleNames];
+    const missingMuscles = requiredMuscles.filter((name) => !musclesByName.has(normalize(name)));
+    if (missingMuscles.length > 0) {
+      missingMuscles.forEach((name) =>
+        addError(`muscle:${normalize(name)}`, `Grupo muscular não encontrado: ${name}.`)
+      );
+      resolvedSlots.set(slotKey, null);
+      return null;
+    }
+
+    if (!createsById.has(slot.create.id)) createsById.set(slot.create.id, { ...slot.create });
+    resolvedSlots.set(slotKey, slot.create.id);
+    return slot.create.id;
+  };
+
+  const entriesByDay = {};
+  Object.entries(PROG3X_SLOTS).forEach(([dayId, slots]) => {
+    entriesByDay[dayId] = slots.flatMap((slot) => {
+      const exerciseId = resolveSlot(slot);
+      return exerciseId
+        ? [{ exerciseId, targetSets: slot.targetSets, reps: slot.reps }]
+        : [];
+    });
+  });
+
+  return { creates: [...createsById.values()], entriesByDay, errors };
+}
+
 // ---------- dates (always LOCAL, never toISOString: UTC would shift the
 // date in Brazil from 21:00 onwards) ----------
 
@@ -100,7 +287,9 @@ export function cycleProgress(programId, days, finished, cycleStart = CYCLE_STAR
   const programDays = (days || []).filter((day) => day.programId === programId);
   const daysById = new Map(programDays.map((day) => [day.id, day]));
   const total = daysById.size;
-  if (total === 0) return { trained: new Set(), total, completed: null };
+  if (total === 0) {
+    return { trained: new Set(), total, completed: null, currentCycleStart: cycleStart };
+  }
 
   const sessions = new Map();
   for (const record of finished || []) {
@@ -148,7 +337,12 @@ export function cycleProgress(programId, days, finished, cycleStart = CYCLE_STAR
       }
     });
 
-  return { trained, total, completed };
+  return {
+    trained,
+    total,
+    completed,
+    currentCycleStart: completed?.date || cycleStart,
+  };
 }
 
 // A day entry's rep target is a single number. New docs store `reps`;
@@ -179,6 +373,33 @@ export function parseDecimal(raw) {
 export function parseRefWeight(refWeight) {
   const m = String(refWeight || "").replace(",", ".").match(/\d+(\.\d+)?/);
   return m ? Number(m[0]) : null;
+}
+
+export function referenceWeightFor(logs, exerciseId, beforeDate, refWeightStr) {
+  const lastLog = lastLogFor(logs, exerciseId, beforeDate);
+  const weights = (Array.isArray(lastLog?.sets) ? lastLog.sets : [])
+    .filter((set) => set?.weight !== null && set?.weight !== undefined)
+    .map((set) => Number(set.weight))
+    .filter(Number.isFinite);
+  return weights.length > 0 ? Math.max(...weights) : parseRefWeight(refWeightStr);
+}
+
+export function flagSuspiciousSets(sets, reference) {
+  if (reference == null) return [];
+  return (Array.isArray(sets) ? sets : []).reduce((flagged, set, index) => {
+    if (set?.weight === null || set?.weight === undefined) return flagged;
+    const difference = Math.abs(set.weight - reference);
+    if (difference > 0.25 * reference && difference > 5) {
+      flagged.push({ index, weight: set.weight });
+    }
+    return flagged;
+  }, []);
+}
+
+export const MAX_SETS = 8;
+
+export function clampTargetSets(v) {
+  return Math.min(MAX_SETS, Math.max(1, Math.floor(Number(v)) || 1));
 }
 
 // Sets to pre-fill when an exercise is started: always the day entry's target
@@ -226,12 +447,55 @@ export function resolveWorkoutExercise(entry, dayDraft, exercisesById) {
   };
 }
 
+export function swapBackSuggestion({
+  entryExerciseId,
+  logs,
+  cycleStartDate,
+  exercisesById,
+  excludedIds,
+  excludedLogKeys,
+}) {
+  if (!entryExerciseId || !cycleStartDate) return null;
+  const eligibleLogs = (Array.isArray(logs) ? logs : []).filter((log) =>
+    log?.date >= cycleStartDate &&
+    !excludedLogKeys?.has(`${log.date}|${log.dayId}`)
+  );
+  const motivatingLog = eligibleLogs
+    .filter((log) => log.substitutedForId && log.exerciseId === entryExerciseId)
+    .sort((a, b) =>
+      b.date.localeCompare(a.date) ||
+      tsMillis(b) - tsMillis(a) ||
+      String(b.dayId || "").localeCompare(String(a.dayId || ""))
+    )[0];
+  if (!motivatingLog) return null;
+
+  const originalId = motivatingLog.substitutedForId;
+  const original = exercisesById && typeof exercisesById.get === "function"
+    ? exercisesById.get(originalId)
+    : exercisesById?.[originalId];
+  if (
+    !original ||
+    excludedIds?.has(originalId) ||
+    eligibleLogs.some((log) => log.exerciseId === originalId)
+  ) return null;
+
+  return {
+    originalId,
+    originalName: original.name,
+    date: motivatingLog.date,
+  };
+}
+
 // Reserved draft metadata must never make a workout look started.
 export function draftHasExerciseSets(dayDraft) {
   if (!dayDraft || typeof dayDraft !== "object" || Array.isArray(dayDraft)) return false;
   return Object.entries(dayDraft).some(([exerciseId, sets]) =>
-    exerciseId !== "__subs" && Array.isArray(sets) && sets.length > 0
+    !exerciseId.startsWith("__") && Array.isArray(sets) && sets.length > 0
   );
+}
+
+export function effectiveDayEntries(day, dayDraft) {
+  return Array.isArray(dayDraft?.__entries) ? dayDraft.__entries : day?.entries || [];
 }
 
 // Draft sets are the local working copy of a workout in progress (they only
@@ -398,16 +662,15 @@ export function weeklyFrequency(logs, nWeeks, today, extraDates = []) {
   return weeks;
 }
 
-// Completed set volume attributed to each muscle in one Monday-Sunday week.
+// Completed set volume attributed to each muscle in an inclusive date range.
 // The returned array is [{muscleId, total, exercises: [{exerciseId, name,
 // sets, factor, contribution}]}]. Exercise names always come from the live
 // catalog, and logs for exercises no longer in that catalog are ignored.
-export function weeklyMuscleSets(logs, exercisesById, weekStart) {
-  const weekEnd = addDaysStr(weekStart, 6);
+export function muscleSetsRange(logs, exercisesById, startDate, endDate) {
   const exerciseSets = new Map();
 
   for (const log of logs || []) {
-    if (!log?.date || log.date < weekStart || log.date > weekEnd) continue;
+    if (!log?.date || log.date < startDate || log.date > endDate) continue;
     const exercise = exercisesById?.get(log.exerciseId);
     if (!exercise) continue;
     const sets = (Array.isArray(log.sets) ? log.sets : [])
@@ -444,6 +707,14 @@ export function weeklyMuscleSets(logs, exercisesById, weekStart) {
   });
 
   return [...byMuscle.values()];
+}
+
+export function weeklyMuscleSets(logs, exercisesById, weekStart) {
+  return muscleSetsRange(logs, exercisesById, weekStart, addDaysStr(weekStart, 6));
+}
+
+export function dailyMuscleSets(logs, exercisesById, date) {
+  return muscleSetsRange(logs, exercisesById, date, date);
 }
 
 // Cardio minutes per week for the last nWeeks (including the current one),

@@ -339,6 +339,25 @@ input, select { font: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.wc-suggest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.wc-suggest span { flex: 1; }
+.wc-suggest button {
+  flex: none;
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 800;
+}
 
 /* sets editor (visible while a log exists) */
 .sets-editor { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--accent-soft); }
@@ -490,7 +509,13 @@ input, select { font: inherit; }
 }
 .item-row:last-child { border-bottom: none; }
 .item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.item-name { font-weight: 700; }
+.item-name { font-weight: 700; text-align: left; }
+.exercise-link {
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 2px;
+}
 .item-sub { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-side { flex: none; text-align: right; font-size: 12px; color: var(--muted); }
 .item-side b { color: var(--ink); display: block; font-size: 14px; }
@@ -596,6 +621,7 @@ input, select { font: inherit; }
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-top: 10px;
 }
 .series-week-btn {
   width: 42px;
@@ -630,11 +656,15 @@ input, select { font: inherit; }
 }
 .series-breakdown[hidden] { display: none; }
 .series-breakdown-row {
+  display: block;
+  width: 100%;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
   padding: 2px 0;
+  text-align: left;
 }
+.series-breakdown-row.exercise-link { color: var(--accent-ink); }
 
 /* ---------- ajustes / manager rows ---------- */
 .settings-h { margin: 20px 4px 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 800; }
@@ -677,6 +707,27 @@ input, select { font: inherit; }
   padding-top: 4px;
   padding-bottom: 4px;
 }
+.days-manager-group + .days-manager-group { margin-top: 16px; }
+.days-manager-program {
+  margin: 0 0 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+.days-manager-row {
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+}
+.days-manager-arrow {
+  flex: none;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+}
+.days-manager-empty { margin: 0; padding: 8px 0; }
 .icon-btn {
   width: 36px; height: 36px;
   flex: none;
