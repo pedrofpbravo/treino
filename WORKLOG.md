@@ -2,7 +2,71 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
-## 2026-09-20 — v7.4: travas, swap-back de substituto, editar dia só-hoje, Séries por dia, histórico clicável, programa 3x novo
+## 2026-09-26 — v7.5: fix da migração do programa 3x (nomes reais) + nomes clicáveis sem cara de hyperlink
+
+### Request (Pedro)
+A migração v7.4 do programa 3x falha no iPhone (toast de erro em todo boot). Pedido:
+(1) mapear os exercícios do 3x contra o catálogo REAL, confirmar o match, usar os
+nomes já cadastrados e criar só os inexistentes (pode até recriar o prog-fb-ul,
+sem histórico; prog-ppl-ul intocável); (2) tirar o visual de hyperlink
+(negrito + sublinhado accent) dos nomes clicáveis em Histórico/Séries.
+
+### Root cause (diagnóstico Fable, catálogo real via scratchpad/treino-backup-2026-09-11.json)
+`resolveProg3xEntries` casa por nameLower exato e foi testada só contra o seed.
+No catálogo real o Pedro renomeou exercícios: "Cadeira extensora" → "Cadeira
+extensora máquina" e "Cadeira flexora bilateral" → "Cadeira flexora máquina"
+não têm match nem fallback de create → errors bloqueiam a migração em todo load.
+Bônus: se rodasse, criaria duplicatas ("Elevação lateral na máquina" já existe
+como "Elevação lateral máquina"; "Panturrilha sentada" já existe como
+"Panturrilha sentado"). O nameLower EXISTE nos docs reais (o buildBackup só o
+omite do export; todo write o grava), então o matcher em si funciona.
+
+### Scope locked (1 rodada AskUserQuestion)
+Elevação lateral (FB 2×12, Upper 4×12) → "Elevação lateral na polia" (POLIA,
+não máquina — decisão do Pedro); Panturrilha em pé (FB 2×8) → "Panturrilha no
+agachamento pendulo"; Rosca Scott (Upper 2×8) → "Bíceps Scott unilateral com
+halter"; Tríceps overhead (Upper 2×10) → "Tríceps francês unilateral com
+halter". Assumido sem objeção: Puxada alta = "Puxada alta máquina"; flexora =
+"Cadeira flexora máquina"; "Panturrilha sentado" (Lower 4×8) usa o existente.
+Creates em produção caem de 5 para 4: remada baixa apoio no peito, crucifixo
+inverso peck deck, hack squat, reverse crunch no banco. Entries substituídas
+in-place nos 3 dias do prog-fb-ul (sem deletar programa); flag
+gym:prog3x-v7-4 mantida (nunca setou em produção, só flagga no sucesso).
+
+### Delegação (1 brief consolidado, codex exec gpt-5.6-sol xhigh, background)
+- `scratchpad/brief-v75-prog3x-links.md` → `scratchpad/codex-v75.log`:
+  (1) candidatos do PROG3X_* com nomes reais primeiro e nomes do seed como
+  fallback (#debug continua funcionando; create de ex-panturrilha_sentada
+  mantido só como fallback de catálogo fresco); (2) toast de erro passa a
+  nomear o primeiro erro (`Erro no programa 3x: ${errors[0]}`); (3) remoção
+  das duas regras `.exercise-link` do styles.css (reset global de button já
+  deixa o texto igual ao não-clicável; classes no markup ficam); (4) bump
+  v7.5 (APP_VERSION + CACHE). Checks: teste node com catálogo real E seed
+  (ordem/S×R exatos por dia, creates exatos, idempotência), parse do main.js,
+  greps, diff completo.
+
+### Resultado e review (mesmo dia)
+- Codex ENTREGUE em uma passada, diff exatamente no escopo (logic.js -40/+16 nos
+  PROG3X_*, main.js 2 linhas, styles.css -8, sw.js 1). Checks do Codex: PASS
+  A/B/C/D + MAIN_PARSE_OK. Fable re-rodou scratchpad/test-prog3x-v75.mjs
+  localmente: PASS A (catálogo real: 0 erros, 4 creates, tuplas exatas por
+  dia), PASS B (seed/#debug: 5 creates incl. ex-panturrilha_sentada), PASS C
+  (idempotência). Teste lido pelo Fable: asserts exatos, não-vácuo.
+- Verificado no browser #debug (SW + caches purgados, gotcha do reload por
+  hash: mudar location.href só de hash NÃO recarrega o módulo, precisa
+  location.reload()): v7.5 em Ajustes; Full Body 7 / Upper 8 / Lower 8 com os
+  nomes e S×R confirmados; prog-ppl-ul intocado (7/6/6/7/7); 5 exercícios
+  criados com músculos certos; zero erros de console. Nomes clicáveis:
+  Histórico ink #1e1e1c peso 700 sem sublinhado (igual ao card), clique abre a
+  sheet de cadastro (RDL / Stiff); breakdown de Séries muted sem sublinhado,
+  também clicável.
+- Screenshot de prova indisponível (Browser pane sem display na sessão);
+  evidência via computed styles + DOM.
+- Zumbi python em 8095 (PID 40556) morto antes do preview; server parado ao
+  final.
+- NÃO COMMITADO: aguardando ordem do Pedro. Deploy = ritual (commit + push,
+  fechar e reabrir o PWA duas vezes; a migração aplica sozinha no primeiro
+  boot logado, toast "Programa 3x atualizado.").
 
 ### Request (Pedro) e scope locked (1 rodada AskUserQuestion + defaults aceitos)
 9 melhorias. Decisões: (1) máx 8 séries duro + validação de peso só ao Finalizar

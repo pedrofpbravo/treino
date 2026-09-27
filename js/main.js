@@ -56,7 +56,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.4";
+const APP_VERSION = "v7.5";
 
 const $ = (id) => document.getElementById(id);
 
@@ -3001,7 +3001,7 @@ async function applyProg3xMigration() {
   if (errors.length > 0) {
     console.error("Migração do programa 3x não aplicada:", errors);
     prog3xStarted = false;
-    toast("Erro ao atualizar o programa 3x.");
+    toast(`Erro no programa 3x: ${errors[0]}`);
     return;
   }
 

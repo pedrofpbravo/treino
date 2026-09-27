@@ -12,13 +12,7 @@ export function normalize(text) {
 
 const PROG3X_LATERAL_RAISE = {
   key: "lateral-raise",
-  candidates: ["Elevação lateral na máquina", "Elevação lateral unilateral na polia"],
-  create: {
-    id: "ex-elevacao_lateral_maquina",
-    name: "Elevação lateral na máquina",
-    primaryMuscleName: "Ombro lateral",
-    secondaryMuscleNames: [],
-  },
+  candidates: ["Elevação lateral na polia", "Elevação lateral unilateral na polia"],
 };
 
 const PROG3X_SLOTS = {
@@ -37,16 +31,10 @@ const PROG3X_SLOTS = {
       reps: 8,
     },
     { candidates: ["Puxada alta máquina"], targetSets: 2, reps: 8 },
-    { candidates: ["Cadeira flexora bilateral"], targetSets: 2, reps: 10 },
+    { candidates: ["Cadeira flexora máquina", "Cadeira flexora bilateral"], targetSets: 2, reps: 10 },
     { ...PROG3X_LATERAL_RAISE, targetSets: 2, reps: 12 },
     {
-      candidates: ["Panturrilha em pé na máquina", "Panturrilha em pé no Smith"],
-      create: {
-        id: "ex-panturrilha_em_pe_maquina",
-        name: "Panturrilha em pé na máquina",
-        primaryMuscleName: "Panturrilha",
-        secondaryMuscleNames: [],
-      },
+      candidates: ["Panturrilha no agachamento pendulo", "Panturrilha em pé no Smith"],
       targetSets: 2,
       reps: 8,
     },
@@ -69,24 +57,12 @@ const PROG3X_SLOTS = {
       reps: 12,
     },
     {
-      candidates: ["Rosca Scott na máquina", "Bíceps máquina", "Bíceps Scott unilateral com halter"],
-      create: {
-        id: "ex-rosca_scott_maquina",
-        name: "Rosca Scott na máquina",
-        primaryMuscleName: "Bíceps",
-        secondaryMuscleNames: [],
-      },
+      candidates: ["Bíceps Scott unilateral com halter"],
       targetSets: 2,
       reps: 8,
     },
     {
-      candidates: ["Extensão de tríceps acima da cabeça na polia", "Tríceps francês unilateral com halter"],
-      create: {
-        id: "ex-triceps_overhead_polia",
-        name: "Extensão de tríceps acima da cabeça na polia",
-        primaryMuscleName: "Tríceps",
-        secondaryMuscleNames: [],
-      },
+      candidates: ["Tríceps francês unilateral com halter"],
       targetSets: 2,
       reps: 10,
     },
@@ -105,10 +81,10 @@ const PROG3X_SLOTS = {
     },
     { candidates: ["RDL / Stiff"], targetSets: 3, reps: 6 },
     { candidates: ["Agachamento búlgaro"], targetSets: 2, reps: 8 },
-    { candidates: ["Cadeira flexora bilateral"], targetSets: 3, reps: 10 },
-    { candidates: ["Cadeira extensora"], targetSets: 2, reps: 10 },
+    { candidates: ["Cadeira flexora máquina", "Cadeira flexora bilateral"], targetSets: 3, reps: 10 },
+    { candidates: ["Cadeira extensora máquina", "Cadeira extensora"], targetSets: 2, reps: 10 },
     {
-      candidates: ["Panturrilha sentada"],
+      candidates: ["Panturrilha sentado", "Panturrilha sentada"],
       create: {
         id: "ex-panturrilha_sentada",
         name: "Panturrilha sentada",

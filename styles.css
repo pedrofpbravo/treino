@@ -510,12 +510,6 @@ input, select { font: inherit; }
 .item-row:last-child { border-bottom: none; }
 .item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .item-name { font-weight: 700; text-align: left; }
-.exercise-link {
-  color: var(--accent-ink);
-  text-decoration: underline;
-  text-decoration-color: var(--accent);
-  text-underline-offset: 2px;
-}
 .item-sub { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-side { flex: none; text-align: right; font-size: 12px; color: var(--muted); }
 .item-side b { color: var(--ink); display: block; font-size: 14px; }
@@ -664,8 +658,6 @@ input, select { font: inherit; }
   padding: 2px 0;
   text-align: left;
 }
-.series-breakdown-row.exercise-link { color: var(--accent-ink); }
-
 /* ---------- ajustes / manager rows ---------- */
 .settings-h { margin: 20px 4px 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; font-weight: 800; }
 .card {
