@@ -39,7 +39,22 @@ const store = {
     note: ex.note || "",
     createdAt: ts(),
     updatedAt: ts(),
-  })),
+  })).concat([
+    // Debug-only (not in seed.js): production already has "T bar row", and the
+    // v7.6 Upper Lower 4x migration aborts without it.
+    {
+      id: "dbg-t_bar_row",
+      name: "T bar row",
+      nameLower: normalize("T bar row"),
+      primaryMuscleId: "mus-costas-superiores",
+      secondaryMuscleIds: ["mus-dorsais", "mus-biceps", "mus-ombro-posterior"],
+      similarIds: [],
+      refWeight: "",
+      note: "",
+      createdAt: ts(),
+      updatedAt: ts(),
+    },
+  ]),
   programs: SEED_PROGRAMS.map((prog, pi) => ({
     id: `prog-${prog.slug}`,
     name: prog.name,
@@ -291,6 +306,54 @@ export async function applyProgram3x({ creates, dayUpdates }) {
   emit.days();
 }
 
+export async function createProgram4x({ creates, program, days, otherProgramIds }) {
+  creates.forEach(({ id: eid, name, primaryMuscleId, secondaryMuscleIds }) => {
+    const data = {
+      name,
+      nameLower: normalize(name),
+      primaryMuscleId,
+      secondaryMuscleIds: secondaryMuscleIds || [],
+      otherMuscleIds: [],
+      similarIds: [],
+      refWeight: "",
+      note: "",
+      createdAt: ts(),
+      updatedAt: ts(),
+    };
+    const exercise = store.exercises.find((item) => item.id === eid);
+    if (exercise) Object.assign(exercise, data);
+    else store.exercises.push({ id: eid, ...data });
+  });
+  const programData = {
+    name: program.name,
+    nameLower: normalize(program.name),
+    order: program.order,
+    favorite: true,
+    createdAt: ts(),
+  };
+  const existingProgram = store.programs.find((item) => item.id === program.id);
+  if (existingProgram) Object.assign(existingProgram, programData);
+  else store.programs.push({ id: program.id, ...programData });
+  days.forEach(({ id: did, name, order, entries }) => {
+    const dayData = {
+      programId: program.id,
+      name,
+      order,
+      entries: entries.map((entry) => ({ ...entry })),
+    };
+    const existingDay = store.days.find((item) => item.id === did);
+    if (existingDay) Object.assign(existingDay, dayData);
+    else store.days.push({ id: did, ...dayData });
+  });
+  (otherProgramIds || []).forEach((pid) => {
+    const other = store.programs.find((item) => item.id === pid);
+    if (other) other.favorite = false;
+  });
+  emit.exercises();
+  emit.programs();
+  emit.days();
+}
+
 // ---------- cardio types ----------
 
 export async function addCardioType(name, order) {
@@ -384,6 +447,13 @@ export async function renameProgram(pid, name) {
   Object.assign(store.programs.find((p) => p.id === pid), { name, nameLower: normalize(name) });
   emit.programs();
 }
+export async function setFavoriteProgram(programId, allProgramIds) {
+  (allProgramIds || []).forEach((pid) => {
+    const prog = store.programs.find((p) => p.id === pid);
+    if (prog) prog.favorite = pid === programId;
+  });
+  emit.programs();
+}
 export async function deleteProgram(pid, dayIds) {
   store.days = store.days.filter((d) => !(dayIds || []).includes(d.id));
   store.programs = store.programs.filter((p) => p.id !== pid);
@@ -473,7 +543,7 @@ export async function importBackup(data) {
     upsert(store.exercises, { id: e.id, ...exerciseData(e), createdAt: ts(), updatedAt: ts() });
   });
   (data.programs || []).forEach((p) =>
-    upsert(store.programs, { ...p, nameLower: normalize(p.name), createdAt: ts() })
+    upsert(store.programs, { ...p, favorite: p.favorite === true, nameLower: normalize(p.name), createdAt: ts() })
   );
   (data.days || []).forEach((d) => upsert(store.days, { ...d }));
   (data.logs || []).forEach((l) => upsert(store.logs, { ...l, ts: ts() }));

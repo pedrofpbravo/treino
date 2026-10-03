@@ -213,6 +213,46 @@ export function applyProgram3x({ creates, dayUpdates }) {
   return batch.commit();
 }
 
+// v7.6 one-time migration: the "Upper Lower 4x" program in ONE batch: new
+// exercise docs, the program doc (favorite: true), its day docs, and
+// `favorite: false` on every other program.
+export function createProgram4x({ creates, program, days, otherProgramIds }) {
+  const batch = writeBatch(fs);
+  creates.forEach(({ id, name, primaryMuscleId, secondaryMuscleIds }) => {
+    batch.set(doc(fs, "exercises", id), {
+      name,
+      nameLower: normalize(name),
+      primaryMuscleId,
+      secondaryMuscleIds: secondaryMuscleIds || [],
+      otherMuscleIds: [],
+      similarIds: [],
+      refWeight: "",
+      note: "",
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  });
+  batch.set(doc(fs, "programs", program.id), {
+    name: program.name,
+    nameLower: normalize(program.name),
+    order: program.order,
+    favorite: true,
+    createdAt: serverTimestamp(),
+  });
+  days.forEach(({ id, name, order, entries }) => {
+    batch.set(doc(fs, "days", id), {
+      programId: program.id,
+      name,
+      order,
+      entries,
+    });
+  });
+  (otherProgramIds || []).forEach((id) => {
+    batch.update(doc(fs, "programs", id), { favorite: false });
+  });
+  return batch.commit();
+}
+
 // ---------- cardio types ----------
 
 export function addCardioType(name, order) {
@@ -321,6 +361,16 @@ export function addProgram(name, order) {
 
 export function renameProgram(id, name) {
   return updateDoc(doc(fs, "programs", id), { name, nameLower: normalize(name) });
+}
+
+// At most one favorite program: one batch sets `favorite: true` on programId and
+// `favorite: false` on every other id. programId = null clears them all.
+export function setFavoriteProgram(programId, allProgramIds) {
+  const batch = writeBatch(fs);
+  (allProgramIds || []).forEach((id) => {
+    batch.update(doc(fs, "programs", id), { favorite: id === programId });
+  });
+  return batch.commit();
 }
 
 // Cascade: the program and all of its days go in one batch.
@@ -468,6 +518,7 @@ export async function importBackup(data) {
       name: p.name,
       nameLower: normalize(p.name),
       order: p.order ?? 0,
+      favorite: p.favorite === true,
       createdAt: serverTimestamp(),
     }]);
   });

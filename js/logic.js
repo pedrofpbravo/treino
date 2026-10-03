@@ -173,6 +173,321 @@ export function resolveProg3xEntries(exercises, muscles) {
   return { creates: [...createsById.values()], entriesByDay, errors };
 }
 
+// ---------- program "Upper Lower 4x" (v7.6 one-time migration) ----------
+// Slot resolution order: (1) `ids` (exact doc id present in the catalog),
+// (2) `candidates` (nameLower match), (3) `create` (only when the slot has one).
+// Id-first keeps the match robust to renames. Existing exercises are never
+// modified. Muscles for creates are referenced by muscle doc id.
+
+export const PROG4X_PROGRAM_ID = "prog-ul4x";
+export const PROG4X_PROGRAM_NAME = "Upper Lower 4x";
+
+const PROG4X_LATERAL_RAISE = {
+  key: "lateral-raise",
+  ids: ["ex-elevacao_lateral_unilateral_polia"],
+  candidates: ["Elevação lateral na polia", "Elevação lateral unilateral na polia"],
+};
+
+export const PROG4X_DAYS = [
+  {
+    id: "day-ul4x-upper-a",
+    name: "Upper A · Costas",
+    order: 0,
+    slots: [
+      {
+        ids: ["ex-puxada_alta_maquina"],
+        candidates: ["Puxada alta máquina"],
+        targetSets: 4,
+        reps: 8,
+      },
+      { candidates: ["T bar row", "T-bar row"], targetSets: 3, reps: 8 },
+      {
+        ids: ["ex-supino_inclinado_halteres"],
+        candidates: ["Supino inclinado com halteres"],
+        targetSets: 3,
+        reps: 8,
+      },
+      { ...PROG4X_LATERAL_RAISE, targetSets: 4, reps: 12 },
+      {
+        candidates: ["Rosca inclinada com halteres"],
+        create: {
+          id: "ex-rosca_inclinada_halteres",
+          name: "Rosca inclinada com halteres",
+          primaryMuscleId: "mus-biceps",
+          secondaryMuscleIds: ["mus-antebraco"],
+        },
+        targetSets: 3,
+        reps: 10,
+      },
+      {
+        ids: ["ex-triceps_testa_polia"],
+        candidates: ["Tríceps testa na polia com barra reta"],
+        targetSets: 2,
+        reps: 12,
+      },
+    ],
+  },
+  {
+    id: "day-ul4x-lower-a",
+    name: "Lower A · Quadríceps",
+    order: 1,
+    slots: [
+      {
+        ids: ["ex-agachamento-smith"],
+        candidates: ["Agachamento smith"],
+        targetSets: 4,
+        reps: 6,
+      },
+      {
+        candidates: ["Afundo halteres"],
+        create: {
+          id: "ex-afundo_halteres",
+          name: "Afundo halteres",
+          primaryMuscleId: "mus-quadriceps",
+          secondaryMuscleIds: ["mus-gluteos"],
+        },
+        targetSets: 3,
+        reps: 8,
+      },
+      {
+        ids: ["ex-cadeira_extensora"],
+        candidates: ["Cadeira extensora máquina", "Cadeira extensora"],
+        targetSets: 3,
+        reps: 12,
+      },
+      {
+        ids: ["ex-cadeira_flexora_bilateral"],
+        candidates: ["Cadeira flexora máquina", "Cadeira flexora bilateral"],
+        targetSets: 3,
+        reps: 10,
+      },
+      {
+        ids: ["ex-panturrilha_smith"],
+        candidates: ["Panturrilha no agachamento pendulo", "Panturrilha em pé no Smith"],
+        targetSets: 4,
+        reps: 10,
+      },
+      {
+        ids: ["ex-abdominal_maquina"],
+        candidates: ["Abdominal máquina"],
+        targetSets: 3,
+        reps: 12,
+      },
+    ],
+  },
+  {
+    id: "day-ul4x-upper-b",
+    name: "Upper B · Peito",
+    order: 2,
+    slots: [
+      {
+        ids: ["ex-supino_maquina"],
+        candidates: ["Supino máquina"],
+        targetSets: 4,
+        reps: 6,
+      },
+      {
+        ids: ["ex-crucifixo_maquina"],
+        candidates: ["Crucifixo máquina"],
+        targetSets: 3,
+        reps: 12,
+      },
+      {
+        ids: ["ex-remada_fechada_unilateral_maquina"],
+        candidates: ["Remada fechada unilateral máquina"],
+        targetSets: 3,
+        reps: 10,
+      },
+      { ...PROG4X_LATERAL_RAISE, targetSets: 3, reps: 12 },
+      {
+        ids: ["ex-crucifixo_inverso_peck_deck"],
+        candidates: ["Crucifixo inverso no peck deck"],
+        create: {
+          id: "ex-crucifixo_inverso_peck_deck",
+          name: "Crucifixo inverso no peck deck",
+          primaryMuscleId: "mus-ombro-posterior",
+          secondaryMuscleIds: ["mus-costas-superiores"],
+        },
+        targetSets: 4,
+        reps: 15,
+      },
+      {
+        candidates: ["Tríceps overhead na polia"],
+        create: {
+          id: "ex-triceps_overhead_polia",
+          name: "Tríceps overhead na polia",
+          primaryMuscleId: "mus-triceps",
+          secondaryMuscleIds: [],
+        },
+        targetSets: 3,
+        reps: 12,
+      },
+      {
+        candidates: ["Rosca martelo com halteres"],
+        create: {
+          id: "ex-rosca_martelo_halteres",
+          name: "Rosca martelo com halteres",
+          primaryMuscleId: "mus-biceps",
+          secondaryMuscleIds: ["mus-antebraco"],
+        },
+        targetSets: 2,
+        reps: 12,
+      },
+    ],
+  },
+  {
+    id: "day-ul4x-lower-b",
+    name: "Lower B · Posterior",
+    order: 3,
+    slots: [
+      {
+        ids: ["ex-rdl_stiff"],
+        candidates: ["RDL / Stiff"],
+        targetSets: 3,
+        reps: 6,
+      },
+      {
+        ids: ["ex-cadeira_flexora_unilateral"],
+        candidates: ["Cadeira flexora unilateral"],
+        targetSets: 3,
+        reps: 10,
+      },
+      {
+        ids: ["ex-hip_thrust"],
+        candidates: ["Hip thrust"],
+        targetSets: 3,
+        reps: 8,
+      },
+      {
+        ids: ["ex-leg_press_45"],
+        candidates: ["Leg press 45°"],
+        targetSets: 3,
+        reps: 10,
+      },
+      {
+        // "Abdutora máquina" (ex-abdutora_maquina) is a different exercise and
+        // must never match: candidates compare the full normalized name.
+        candidates: ["Adutora máquina"],
+        create: {
+          id: "ex-adutora_maquina",
+          name: "Adutora máquina",
+          primaryMuscleId: "mus-adutores",
+          secondaryMuscleIds: [],
+        },
+        targetSets: 2,
+        reps: 12,
+      },
+      {
+        ids: ["RaGL7etCaIjoUIA0tVje", "ex-panturrilha_sentada"],
+        candidates: ["Panturrilha sentado", "Panturrilha sentada"],
+        create: {
+          id: "ex-panturrilha_sentada",
+          name: "Panturrilha sentada",
+          primaryMuscleId: "mus-panturrilha",
+          secondaryMuscleIds: [],
+        },
+        targetSets: 4,
+        reps: 15,
+      },
+      {
+        ids: ["ex-reverse_crunch_banco"],
+        candidates: ["Reverse crunch no banco"],
+        create: {
+          id: "ex-reverse_crunch_banco",
+          name: "Reverse crunch no banco",
+          primaryMuscleId: "mus-abdomen",
+          secondaryMuscleIds: [],
+        },
+        targetSets: 2,
+        reps: 12,
+      },
+    ],
+  },
+];
+
+// Pure resolver. Returns { creates, days, errors }: `creates` are the new
+// exercise docs (deduplicated by id), `days` are ready-to-write day docs
+// ({id, name, order, entries}). Any error means nothing may be written.
+export function resolveProg4x(exercises, muscles) {
+  const exerciseIds = new Set((exercises || []).map((exercise) => exercise.id));
+  const exercisesByName = new Map(
+    (exercises || []).map((exercise) => [
+      exercise.nameLower ?? normalize(exercise.name),
+      exercise,
+    ])
+  );
+  const muscleIds = new Set((muscles || []).map((muscle) => muscle.id));
+  const createsById = new Map();
+  const resolvedSlots = new Map();
+  const errors = [];
+  const errorKeys = new Set();
+
+  const addError = (key, message) => {
+    if (errorKeys.has(key)) return;
+    errorKeys.add(key);
+    errors.push(message);
+  };
+
+  const resolveSlot = (slot) => {
+    const candidates = slot.candidates || [];
+    const slotKey = slot.key || slot.create?.id || candidates.map(normalize).join("|");
+    if (resolvedSlots.has(slotKey)) return resolvedSlots.get(slotKey);
+
+    const idMatch = (slot.ids || []).find((id) => exerciseIds.has(id));
+    if (idMatch) {
+      resolvedSlots.set(slotKey, idMatch);
+      return idMatch;
+    }
+
+    const nameMatch = candidates
+      .map((candidate) => exercisesByName.get(normalize(candidate)))
+      .find(Boolean);
+    if (nameMatch) {
+      resolvedSlots.set(slotKey, nameMatch.id);
+      return nameMatch.id;
+    }
+
+    if (!slot.create) {
+      addError(`exercise:${slotKey}`, `Exercício não encontrado: ${candidates.join(" / ")}.`);
+      resolvedSlots.set(slotKey, null);
+      return null;
+    }
+
+    const requiredMuscles = [slot.create.primaryMuscleId, ...slot.create.secondaryMuscleIds];
+    const missingMuscles = requiredMuscles.filter((id) => !muscleIds.has(id));
+    if (missingMuscles.length > 0) {
+      missingMuscles.forEach((id) =>
+        addError(`muscle:${id}`, `Grupo muscular não encontrado: ${id}.`)
+      );
+      resolvedSlots.set(slotKey, null);
+      return null;
+    }
+
+    if (!createsById.has(slot.create.id)) {
+      createsById.set(slot.create.id, {
+        ...slot.create,
+        secondaryMuscleIds: [...slot.create.secondaryMuscleIds],
+      });
+    }
+    resolvedSlots.set(slotKey, slot.create.id);
+    return slot.create.id;
+  };
+
+  const days = PROG4X_DAYS.map((day) => ({
+    id: day.id,
+    name: day.name,
+    order: day.order,
+    entries: day.slots.flatMap((slot) => {
+      const exerciseId = resolveSlot(slot);
+      return exerciseId
+        ? [{ exerciseId, targetSets: slot.targetSets, reps: slot.reps }]
+        : [];
+    }),
+  }));
+
+  return { creates: [...createsById.values()], days, errors };
+}
+
 // ---------- dates (always LOCAL, never toISOString: UTC would shift the
 // date in Brazil from 21:00 onwards) ----------
 
@@ -770,6 +1085,22 @@ export function monthlyCardio(cardio, nMonths = 6, today = todayStr()) {
 
 export const sortByOrder = (list) =>
   [...list].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.name || "").localeCompare(b.name || "", "pt"));
+
+// Display-only ordering: the favorite program first, the rest by `order`.
+// Never mutates `order`. If corrupt data carries several favorites, the one
+// that sorts first by `order` wins and the others fall back to plain order.
+export const sortProgramsFavoriteFirst = (programs) => {
+  const ordered = sortByOrder(programs);
+  const favorite = ordered.find((p) => p.favorite === true);
+  if (!favorite) return ordered;
+  return [favorite, ...ordered.filter((p) => p !== favorite)];
+};
+
+// Id of the favorite program in a list (same winner rule as above), or null.
+export const favoriteProgramId = (programs) => {
+  const favorite = sortByOrder(programs).find((p) => p.favorite === true);
+  return favorite ? favorite.id : null;
+};
 
 export const sortExercises = (list) =>
   [...list].sort((a, b) => (a.nameLower || "").localeCompare(b.nameLower || "", "pt"));

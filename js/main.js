@@ -12,6 +12,9 @@ const db = location.hash === "#debug" ? fakeDb : realDb;
 import {
   normalize,
   resolveProg3xEntries,
+  resolveProg4x,
+  PROG4X_PROGRAM_ID,
+  PROG4X_PROGRAM_NAME,
   todayStr,
   fmtDate,
   fmtDateShortMonth,
@@ -50,13 +53,15 @@ import {
   dailyCardio,
   monthlyCardio,
   sortByOrder,
+  sortProgramsFavoriteFirst,
+  favoriteProgramId,
   sortExercises,
 } from "./logic.js";
 import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.5";
+const APP_VERSION = "v7.6";
 
 const $ = (id) => document.getElementById(id);
 
@@ -278,6 +283,64 @@ function numericRefWeight(id) {
 
 // ---------- treino ----------
 
+// Per-program day memory: localStorage["gym:dayByProgram"] = {programId: dayId}.
+function readDayByProgram() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("gym:dayByProgram") || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+// The one place that assigns state.dayId: keeps `gym:day` (last day overall) and
+// `gym:dayByProgram` (last day per program) in sync. A null day is stored as ""
+// in `gym:day` and never recorded in the per-program map.
+function setSelectedDay(dayId) {
+  state.dayId = dayId || null;
+  localStorage.setItem("gym:day", state.dayId || "");
+  if (state.dayId && state.programId) {
+    const map = readDayByProgram();
+    map[state.programId] = state.dayId;
+    try {
+      localStorage.setItem("gym:dayByProgram", JSON.stringify(map));
+    } catch {
+      // storage full or blocked: the memory is only a convenience
+    }
+  }
+}
+
+// Selects a program in the Treino tab plus its remembered day (else its first
+// day) and re-renders. Returns false when the program does not exist.
+function selectProgram(programId) {
+  if (!state.programs.some((p) => p.id === programId)) return false;
+  state.reorderMode = false;
+  state.programId = programId;
+  localStorage.setItem("gym:program", programId);
+  const days = daysOf(programId);
+  const remembered = readDayByProgram()[programId];
+  setSelectedDay(days.some((d) => d.id === remembered) ? remembered : days[0]?.id || null);
+  renderTreino();
+  return true;
+}
+
+// Selects the favorite program (if any). Used once per page load at boot and
+// available to later flows (e.g. right after a migration creates a favorite).
+function selectFavoriteProgram() {
+  const id = favoriteProgramId(state.programs);
+  return id ? selectProgram(id) : false;
+}
+
+// Cold boot: once the first non-empty programs snapshot and the days snapshot
+// are both in, open the favorite program. Runs once per page load, whether or
+// not a favorite exists, so later switches and later favorite changes never
+// move the user.
+function applyFavoriteOnBoot() {
+  if (favoriteAppliedOnBoot || state.programs.length === 0 || !daysSnapshotReady) return;
+  favoriteAppliedOnBoot = true;
+  selectFavoriteProgram();
+}
+
 function selectDefaults() {
   const previousProgramId = state.programId;
   const previousDayId = state.dayId;
@@ -288,8 +351,7 @@ function selectDefaults() {
   }
   const days = state.programId ? daysOf(state.programId) : [];
   if (!days.some((d) => d.id === state.dayId)) {
-    state.dayId = days[0]?.id || null;
-    localStorage.setItem("gym:day", state.dayId || "");
+    setSelectedDay(days[0]?.id || null);
   }
   if (state.programId !== previousProgramId || state.dayId !== previousDayId) {
     state.reorderMode = false;
@@ -327,8 +389,7 @@ function renderTreino() {
     chip.textContent = trainedDays.has(day.id) ? `✓ ${day.name}` : day.name;
     chip.addEventListener("click", () => {
       state.reorderMode = false;
-      state.dayId = day.id;
-      localStorage.setItem("gym:day", day.id);
+      setSelectedDay(day.id);
       renderTreino();
     });
     chipsEl.appendChild(chip);
@@ -2525,6 +2586,16 @@ function renderCardioTypesManager() {
   });
 }
 
+// Tapping a non-favorite star makes it the only favorite; tapping the favorite's
+// star clears the favorite. Display order and boot selection follow from the
+// programs snapshot.
+function toggleFavoriteProgram(program) {
+  const allIds = state.programs.map((p) => p.id);
+  db.setFavoriteProgram(program.favorite === true ? null : program.id, allIds).catch(() =>
+    toast("Erro ao salvar favorito.")
+  );
+}
+
 function renderDaysManager() {
   const manager = $("days-manager");
   manager.innerHTML = "";
@@ -2532,9 +2603,22 @@ function renderDaysManager() {
     const group = document.createElement("section");
     group.className = "days-manager-group";
 
+    const head = document.createElement("div");
+    head.className = "days-manager-head";
+
     const subtitle = document.createElement("h4");
     subtitle.className = "days-manager-program";
     subtitle.textContent = program.name;
+
+    const isFavorite = program.favorite === true;
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "icon-btn fav-btn" + (isFavorite ? " on" : "");
+    star.textContent = isFavorite ? "★" : "☆";
+    star.setAttribute("aria-label", isFavorite ? "Favorito" : "Marcar como favorito");
+    star.setAttribute("aria-pressed", isFavorite ? "true" : "false");
+    star.addEventListener("click", () => toggleFavoriteProgram(program));
+    head.append(subtitle, star);
 
     const list = document.createElement("div");
     list.className = "days-manager-list";
@@ -2562,7 +2646,7 @@ function renderDaysManager() {
       list.appendChild(empty);
     }
 
-    group.append(subtitle, list);
+    group.append(head, list);
     manager.appendChild(group);
   });
 }
@@ -2593,7 +2677,12 @@ function buildBackup() {
       createdAt: iso(e.createdAt),
       updatedAt: iso(e.updatedAt),
     })),
-    programs: state.programs.map(({ id, name, order }) => ({ id, name, order })),
+    programs: state.programs.map(({ id, name, order, favorite }) => ({
+      id,
+      name,
+      order,
+      favorite: favorite === true,
+    })),
     days: state.days.map(({ id, programId, name, order, entries }) => ({
       id,
       programId,
@@ -2758,6 +2847,7 @@ const FINISH_BACKFILL_KEY = "gym:session-backfill-v6-5";
 const MUSCLE_REVIEW_KEY = "gym:muscle-review-v7-2";
 const MUSCLE_TAXONOMY_KEY = "gym:muscle-taxonomy-v7-3";
 const PROG3X_KEY = "gym:prog3x-v7-4";
+const PROG4X_KEY = "gym:prog4x-v7-6";
 const FINISH_BACKFILL_DATES = ["2026-09-05"];
 const MUSCLE_TAXONOMY = [
   ["mus-peito", "Peito"],
@@ -2820,9 +2910,12 @@ let cardioBikesStarted = false;
 let finishBackfillStarted = false;
 let muscleTaxonomyStarted = false;
 let prog3xStarted = false;
+let prog4xStarted = false;
 let muscleSnapshotReady = false;
 let exerciseSnapshotReady = false;
 let daysSnapshotReady = false;
+let programsSnapshotReady = false;
+let favoriteAppliedOnBoot = false;
 
 async function migrateRefWeights(exercises) {
   if (refWeightMigrationStarted || localStorage.getItem(REFWEIGHT_MIGRATION_KEY)) return;
@@ -3032,6 +3125,49 @@ async function applyProg3xMigration() {
   }
 }
 
+// v7.6: creates the "Upper Lower 4x" program (4 days, a few new exercises) and
+// makes it the only favorite, all in one batch. Resolves everything first and
+// aborts with a toast on the first error. Skipped when the program already
+// exists, so owner edits survive a lost flag (other device, cleared storage).
+async function applyProg4xMigration() {
+  const isDebug = location.hash === "#debug";
+  if (prog4xStarted || (!isDebug && localStorage.getItem(PROG4X_KEY))) return;
+  if (!muscleSnapshotReady || !exerciseSnapshotReady || !daysSnapshotReady || !programsSnapshotReady) {
+    return;
+  }
+  prog4xStarted = true;
+
+  if (state.programs.some((program) => program.id === PROG4X_PROGRAM_ID)) {
+    if (!isDebug) localStorage.setItem(PROG4X_KEY, "1");
+    return;
+  }
+
+  const { creates, days, errors } = resolveProg4x(state.exercises, state.muscles);
+  if (errors.length > 0) {
+    console.error("Migração do programa 4x não aplicada:", errors);
+    prog4xStarted = false;
+    toast(`Erro no programa 4x: ${errors[0]}`);
+    return;
+  }
+
+  const maxOrder = state.programs.reduce((max, program) => Math.max(max, program.order ?? 0), -1);
+  try {
+    await db.createProgram4x({
+      creates,
+      program: { id: PROG4X_PROGRAM_ID, name: PROG4X_PROGRAM_NAME, order: maxOrder + 1 },
+      days,
+      otherProgramIds: state.programs.map((program) => program.id),
+    });
+    if (!isDebug) localStorage.setItem(PROG4X_KEY, "1");
+    selectProgram(PROG4X_PROGRAM_ID);
+    toast("Programa Upper Lower 4x criado.");
+  } catch (error) {
+    console.error("Erro na migração do programa 4x:", error);
+    prog4xStarted = false;
+    toast("Erro ao criar o programa 4x.");
+  }
+}
+
 // Sessions finished before v6.5 left no record: "Finalizar treino" used to
 // write nothing, so a day trained with one exercise left over never got its
 // check. Marks those days as finished from the logs they do have, so the id
@@ -3072,6 +3208,7 @@ function onMuscles(muscles) {
   muscleSnapshotReady = true;
   applyMuscleTaxonomy();
   applyProg3xMigration();
+  applyProg4xMigration();
   renderMuscleChips();
   renderMusclesManager();
   renderExercises();
@@ -3093,6 +3230,7 @@ function onExercises(exercises) {
   seedSmithExercise(exercises);
   applyMuscleTaxonomy();
   applyProg3xMigration();
+  applyProg4xMigration();
   renderExercises();
   renderTreino();
   renderSeries();
@@ -3104,7 +3242,10 @@ function onPrograms(programs) {
     db.seedPrograms().catch(() => toast("Erro ao criar programas iniciais."));
     return;
   }
-  state.programs = sortByOrder(programs);
+  state.programs = sortProgramsFavoriteFirst(programs);
+  programsSnapshotReady = true;
+  applyFavoriteOnBoot();
+  applyProg4xMigration();
   renderProgramsList();
   renderDaysManager();
   renderTreino();
@@ -3113,7 +3254,9 @@ function onPrograms(programs) {
 function onDays(days) {
   state.days = days;
   daysSnapshotReady = true;
+  applyFavoriteOnBoot();
   applyProg3xMigration();
+  applyProg4xMigration();
   renderProgramsList();
   renderDaysManager();
   renderTreino();

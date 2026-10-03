@@ -2,6 +2,44 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
+## 2026-10-03: v7.6, programa "Upper Lower 4x" + programa favorito
+
+### Request (Pedro)
+Regime novo 4x (Upper A costas, Lower A quadríceps, Upper B peito, Lower B posterior), validado
+em chat em 6 rodadas (volume semanal por grupo com direta 1x / indireta 0,5x). Treinos de semana
+máx 6 exercícios, fim de semana máx 7. Novo programa (o 3x fica). Mais: programa favorito em
+Ajustes, aparece primeiro em todas as listas e SEMPRE abre selecionado no boot (sem exceção para
+draft em andamento: Pedro removeu essa exceção). Novo programa já entra como favorito.
+
+**Executor nesta tarefa: agentes Sonnet 5.5 (instrução explícita do Pedro no chat), não Codex.**
+
+### Scope locked
+- 5 exercícios novos: Rosca inclinada com halteres, Afundo halteres, Tríceps overhead na polia,
+  Rosca martelo com halteres, Adutora máquina (adutora, NÃO a Abdutora existente).
+- "T bar row" já existe em produção (cadastrado depois do backup de 11/09; id desconhecido):
+  só match por nome, sem create; ausente = migração aborta com toast.
+- Resolução nova: id primeiro, depois nameLower, depois create (robusto a renomes).
+- Firebase MCP falhou nesta sessão (CONNECT_TIMEOUT): catálogo real = backup 11/09 + 4 creates v7.5.
+
+### Delegações (serializadas, ambas mexem em main.js)
+- `scratchpad/brief-v76-1-favorite.md` → agente Sonnet (favorito: campo `favorite`, ordenação,
+  estrela em Ajustes, boot no favorito, `gym:dayByProgram`, backup).
+- `scratchpad/brief-v76-2-prog4x.md` → agente Sonnet (migração `gym:prog4x-v7-6`, prog-ul4x,
+  4 dias, fakedb `dbg-t_bar_row`, bump v7.6).
+
+### Resultado e review (mesmo dia)
+- Ambos entregues em uma passada, sem follow-up. Fable leu os diffs (db.createProgram4x,
+  applyProg4xMigration, setSelectedDay/selectProgram/applyFavoriteOnBoot, estrela em Ajustes) e
+  re-rodou: test-prog4x-v76 PASS REAL/NO_TBAR/SEED; test-prog3x-v75 PASS A/B/C; test-favorite-v76
+  5 PASS. Zero travessões nas linhas adicionadas.
+- Browser #debug (SW + caches + localStorage purgados): v7.6; "Upper Lower 4x ★" primeiro no
+  dropdown e em Ajustes, selecionado em Upper A; 4 dias com exercícios e S×R exatos; 5 creates
+  com músculos certos; estrela troca o favorito (PPL vai pro topo), desmarcar volta à ordem pura;
+  backup exporta `favorite`; zero erros/warnings no console.
+- Não verificado no browser: o caminho "boot abre no favorito" em boots seguintes (o fakedb zera a
+  cada load e a migração reseleciona); coberto por leitura de código.
+- Deploy: commit + push v7.6.
+
 ## 2026-09-26 — v7.5: fix da migração do programa 3x (nomes reais) + nomes clicáveis sem cara de hyperlink
 
 ### Request (Pedro)

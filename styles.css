@@ -700,8 +700,16 @@ input, select { font: inherit; }
   padding-bottom: 4px;
 }
 .days-manager-group + .days-manager-group { margin-top: 16px; }
-.days-manager-program {
+.days-manager-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   margin: 0 0 5px;
+}
+.days-manager-program {
+  margin: 0;
+  min-width: 0;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
@@ -730,6 +738,8 @@ input, select { font: inherit; }
 }
 .icon-btn:active { background: var(--bg); }
 .icon-btn.del { color: var(--danger); }
+.icon-btn.fav-btn { font-size: 20px; }
+.icon-btn.fav-btn.on { color: var(--accent); }
 .icon-btn:disabled { opacity: 0.25; }
 
 .row-add { display: flex; gap: 8px; }
