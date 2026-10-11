@@ -617,6 +617,42 @@ export function addDaysStr(dateStr, days) {
   return todayStr(d);
 }
 
+// Chart label for the Monday-to-Sunday week starting at weekStart:
+// "05-11/10" inside one month, "28/09-04/10" across a month or year boundary.
+export function weekRangeLabel(weekStart) {
+  const weekEnd = addDaysStr(weekStart, 6);
+  if (weekStart.slice(0, 7) === weekEnd.slice(0, 7)) {
+    return `${weekStart.slice(8, 10)}-${fmtDate(weekEnd)}`;
+  }
+  return `${fmtDate(weekStart)}-${fmtDate(weekEnd)}`;
+}
+
+// How many chart periods ("day" | "week" | "month") to draw: from the period
+// of the earliest valid date up to the one of `today`, clamped to [min, max].
+// With no valid date it returns min.
+export function chartPeriodCount(dates, today, unit, min = 5, max = 52) {
+  let earliest = null;
+  for (const date of dates || []) {
+    if (typeof date !== "string" || date.length < 10) continue;
+    if (earliest === null || date < earliest) earliest = date;
+  }
+  if (earliest === null) return min;
+  const a = dateFromStr(earliest);
+  const b = dateFromStr(today);
+  const utcDay = (d) => Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+  let span;
+  if (unit === "month") {
+    span = (b.getFullYear() - a.getFullYear()) * 12 + (b.getMonth() - a.getMonth()) + 1;
+  } else if (unit === "week") {
+    const weekA = dateFromStr(weekStartStr(earliest));
+    const weekB = dateFromStr(weekStartStr(today));
+    span = (utcDay(weekB) - utcDay(weekA)) / 7 + 1;
+  } else {
+    span = utcDay(b) - utcDay(a) + 1;
+  }
+  return Math.max(min, Math.min(max, span));
+}
+
 // ---------- logs ----------
 
 export function logDocId({ date, dayId, exerciseId }) {
@@ -644,6 +680,7 @@ const cloneSets = (sets) =>
     reps: Number.isFinite(Number(s.reps)) ? Number(s.reps) : null,
     weight: s.weight === null || s.weight === undefined || s.weight === "" ? null : Number(s.weight),
     done: s.done !== false,
+    ...(s.warmup === true ? { warmup: true } : {}),
   }));
 
 // Logs written before per-set checks have no `done` field. They remain
@@ -751,6 +788,7 @@ export function parseRefWeight(refWeight) {
 export function referenceWeightFor(logs, exerciseId, beforeDate, refWeightStr) {
   const lastLog = lastLogFor(logs, exerciseId, beforeDate);
   const weights = (Array.isArray(lastLog?.sets) ? lastLog.sets : [])
+    .filter((set) => !isWarmupSet(set))
     .filter((set) => set?.weight !== null && set?.weight !== undefined)
     .map((set) => Number(set.weight))
     .filter(Number.isFinite);
@@ -782,6 +820,83 @@ export function prefillSets(entry, refWeightNum = null) {
   const n = Math.max(1, Number(entry?.targetSets) || 3);
   const reps = entryReps(entry);
   return Array.from({ length: n }, () => ({ reps, weight: refWeightNum, done: false }));
+}
+
+// ---------- warm-up set (v7.8) ----------
+// A day entry may carry `warmup: true|false`. A warm-up set is the first row of
+// the card (`warmup: true` on the set); it never counts as training volume.
+
+export const WARMUP_MAX_PER_DAY = 2;
+export const WARMUP_REPS = 12;
+export const WARMUP_REST_SECS = 60;
+
+export const isWarmupSet = (set) => set?.warmup === true;
+
+// The working (non-warm-up) sets of a draft or log.
+export const workingSets = (sets) =>
+  (Array.isArray(sets) ? sets : []).filter((set) => !isWarmupSet(set));
+
+const WARMUP_PUSH = new Set(["mus-peito", "mus-ombro-anterior"]);
+const WARMUP_PULL = new Set(["mus-dorsais", "mus-costas-superiores"]);
+const WARMUP_LOWER = new Set(["mus-quadriceps", "mus-posterior", "mus-gluteos"]);
+
+// Exercise ids of a day that get a warm-up set (max 2). Explicit booleans on
+// the entries win: if ANY entry carries one, the day is "manual" and entries
+// without the field count as false. Otherwise the default rule applies, by the
+// exercise's primary muscle: W1 = first compound entry (push, pull or lower);
+// W2 = first later entry from the complementary upper group (after a push
+// comes a pull, after a pull a push, after a lower push or pull). Computed at
+// read time, never written. exercisesById may be a Map or a plain object.
+export function warmupEntryIds(entries, exercisesById) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (list.some((entry) => typeof entry?.warmup === "boolean")) {
+    return new Set(
+      list
+        .filter((entry) => entry?.warmup === true && entry.exerciseId)
+        .map((entry) => entry.exerciseId)
+        .slice(0, WARMUP_MAX_PER_DAY)
+    );
+  }
+
+  const getExercise = (id) =>
+    exercisesById && typeof exercisesById.get === "function"
+      ? exercisesById.get(id)
+      : exercisesById?.[id];
+  const primaryOf = (entry) => getExercise(entry?.exerciseId)?.primaryMuscleId || null;
+  const inUpper = (id) => WARMUP_PUSH.has(id) || WARMUP_PULL.has(id);
+
+  const firstIndex = list.findIndex((entry) => {
+    const primary = primaryOf(entry);
+    return inUpper(primary) || WARMUP_LOWER.has(primary);
+  });
+  if (firstIndex < 0) return new Set();
+
+  const first = primaryOf(list[firstIndex]);
+  const wantsSecond = WARMUP_PUSH.has(first)
+    ? (id) => WARMUP_PULL.has(id)
+    : WARMUP_PULL.has(first)
+      ? (id) => WARMUP_PUSH.has(id)
+      : inUpper;
+  const ids = new Set([list[firstIndex].exerciseId]);
+  const second = list.slice(firstIndex + 1).find((entry) => wantsSecond(primaryOf(entry)));
+  if (second) ids.add(second.exerciseId);
+  return ids;
+}
+
+// Suggested warm-up set: 30% of the Epley 1RM estimate, rounded DOWN to a
+// multiple of 2.5 kg, 12 reps. No usable reference (or a result below 2.5 kg)
+// leaves the weight empty. The 1RM stays internal; it is never displayed.
+export function warmupSet(refWeightNum, targetReps) {
+  const ref = Number(refWeightNum);
+  const reps = Number(targetReps);
+  let weight = null;
+  if (refWeightNum !== null && refWeightNum !== undefined && refWeightNum !== "" &&
+      Number.isFinite(ref) && ref > 0) {
+    const oneRepMax = ref * (1 + (Number.isFinite(reps) && reps > 0 ? reps : 10) / 30);
+    const rounded = Math.floor((oneRepMax * 0.3) / 2.5 + 1e-9) * 2.5;
+    if (rounded >= 2.5) weight = rounded;
+  }
+  return { reps: WARMUP_REPS, weight, done: false, warmup: true };
 }
 
 // Resolve the exercise shown and logged for a day entry. The entry keeps its
@@ -877,19 +992,25 @@ export function draftSetDone(set) {
   return set?.done === true;
 }
 
+// "Done" means every WORKING set is checked; the warm-up set is ignored.
 export function draftAllDone(sets) {
-  return Array.isArray(sets) && sets.length > 0 && sets.every(draftSetDone);
+  const working = workingSets(sets);
+  return working.length > 0 && working.every(draftSetDone);
 }
 
 // The sets that "Finalizar treino" writes to the history: checked sets only.
+// An exercise with no checked WORKING set records nothing (a lone checked
+// warm-up is dropped); otherwise a checked warm-up set is kept, first.
 export function recordedSets(sets) {
-  return (Array.isArray(sets) ? sets : [])
-    .filter(draftSetDone)
-    .map((s) => ({
-      reps: Number.isFinite(Number(s.reps)) ? Number(s.reps) : null,
-      weight: s.weight === null || s.weight === undefined || s.weight === "" ? null : Number(s.weight),
-      done: true,
-    }));
+  const checked = (Array.isArray(sets) ? sets : []).filter(draftSetDone);
+  if (!checked.some((s) => !isWarmupSet(s))) return [];
+  const mapped = checked.map((s) => ({
+    reps: Number.isFinite(Number(s.reps)) ? Number(s.reps) : null,
+    weight: s.weight === null || s.weight === undefined || s.weight === "" ? null : Number(s.weight),
+    done: true,
+    ...(isWarmupSet(s) ? { warmup: true } : {}),
+  }));
+  return [...mapped.filter(isWarmupSet), ...mapped.filter((s) => !isWarmupSet(s))];
 }
 
 // Seed a draft from an already-saved log (e.g. the day was finished, reopened
@@ -910,16 +1031,22 @@ const fmtKg = (w) => `${String(w)}kg`;
 // Weightless sets keep their useful reps value on its own.
 export function setsParts(sets) {
   const list = cloneSets(sets).filter((s) => s.reps !== null || s.weight !== null);
-  return list.map((s) => ({
+  // the warm-up set (if any) always reads first
+  return [...list.filter(isWarmupSet), ...list.filter((s) => !isWarmupSet(s))].map((s) => ({
     weight: s.weight === null ? "" : fmtKg(s.weight),
     reps: s.reps === null ? "?" : String(s.reps),
+    warmup: isWarmupSet(s),
   }));
 }
 
 // Plain-text equivalent used by history, summaries and catalog rows.
+// The warm-up set reads "Aq 12×25kg".
 export function setsLabel(sets) {
   return setsParts(sets)
-    .map((s) => (s.weight ? `${s.reps}×${s.weight}` : s.reps))
+    .map((s) => {
+      const text = s.weight ? `${s.reps}×${s.weight}` : s.reps;
+      return s.warmup ? `Aq ${text}` : text;
+    })
     .join(" · ");
 }
 
@@ -927,6 +1054,7 @@ export function setsLabel(sets) {
 export function topWeight(log) {
   let top = null;
   for (const s of log.sets || []) {
+    if (isWarmupSet(s)) continue;
     const w = Number(s.weight);
     if (Number.isFinite(w) && s.weight !== null && s.weight !== "" && (top === null || w > top)) top = w;
   }
@@ -976,6 +1104,7 @@ export function exerciseHistory(logs, exerciseId) {
         weight: s.weight === null ? "" : fmtKg(s.weight),
         reps: s.reps === null ? "?" : String(s.reps),
         done: s.done,
+        warmup: isWarmupSet(s),
       })),
     }));
 }
@@ -1047,7 +1176,7 @@ export function muscleSetsRange(logs, exercisesById, startDate, endDate) {
     const exercise = exercisesById?.get(log.exerciseId);
     if (!exercise) continue;
     const sets = (Array.isArray(log.sets) ? log.sets : [])
-      .filter((set) => set?.done !== false).length;
+      .filter((set) => set?.done !== false && !isWarmupSet(set)).length;
     if (!sets) continue;
 
     const current = exerciseSets.get(log.exerciseId);
@@ -1186,3 +1315,162 @@ export const favoriteProgramId = (programs) => {
 
 export const sortExercises = (list) =>
   [...list].sort((a, b) => (a.nameLower || "").localeCompare(b.nameLower || "", "pt"));
+
+// ---------- working load, reference proposals and load insights (v7.8-C) ----------
+
+// Numeric weight of a checked, non-warm-up set, or null. A missing `done`
+// counts as done (legacy logs); an explicit false is pending and ignored.
+function workingWeight(set) {
+  if (!set || set.done === false || isWarmupSet(set)) return null;
+  const raw = set.weight;
+  if (raw === null || raw === undefined || raw === "" || typeof raw === "boolean") return null;
+  const weight = Number(raw);
+  return Number.isFinite(weight) && weight > 0 ? weight : null;
+}
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// The load of one session of an exercise: the highest weight reached in at
+// least 2 working sets (the SECOND highest weight); a single weighted set is
+// its own load. [60,65,62.5] -> 62.5, [60,60,60] -> 60, [65,60] -> 60,
+// [70] -> 70. Warm-up, pending and weightless sets are ignored; none -> null.
+export function workingLoad(sets) {
+  const weights = (Array.isArray(sets) ? sets : [])
+    .map(workingWeight)
+    .filter((weight) => weight !== null)
+    .sort((a, b) => b - a);
+  if (weights.length === 0) return null;
+  return weights.length === 1 ? weights[0] : weights[1];
+}
+
+// Reference-weight proposals for a finished workout. Each plan is
+// {exerciseId, name, refWeight, sets} (sets = the recorded sets). A proposal
+// exists when at least 2 checked working sets are heavier than the current
+// reference (every weighted set counts when there is no reference); the new
+// reference is the workingLoad of the sets. One set above never proposes.
+// Returns [{exerciseId, name, from (number|null), to, delta (number|null)}],
+// plan order kept; if an exercise shows up twice the last plan wins, like
+// the log it overwrites.
+export function refProposals(plans) {
+  const byExercise = new Map();
+  for (const plan of plans || []) {
+    if (!plan?.exerciseId) continue;
+    const parsed = parseRefWeight(plan.refWeight);
+    const from = parsed !== null && parsed > 0 ? parsed : null;
+    const weights = (Array.isArray(plan.sets) ? plan.sets : [])
+      .map(workingWeight)
+      .filter((weight) => weight !== null);
+    const above = from === null ? weights : weights.filter((weight) => weight > from);
+    if (above.length < 2) {
+      byExercise.set(plan.exerciseId, null);
+      continue;
+    }
+    const to = workingLoad(plan.sets);
+    byExercise.set(plan.exerciseId, {
+      exerciseId: plan.exerciseId,
+      name: plan.name || plan.exerciseId,
+      from,
+      to,
+      delta: from === null ? null : round2(to - from),
+    });
+  }
+  return [...byExercise.values()].filter(Boolean);
+}
+
+const DAY_MS = 86400000;
+const dayNumber = (dateStr) => {
+  const [y, m, d] = String(dateStr).slice(0, 10).split("-").map(Number);
+  return Math.floor(Date.UTC(y, m - 1, d) / DAY_MS);
+};
+
+export const STALL_MIN_DAYS = 30; // best load set at least this long ago
+export const STALL_RECENT_DAYS = 21; // and trained within this window
+export const STALL_STEP = 2.5; // suggested next load
+
+// Load history of every exercise, derived from the logs only.
+//  progressions: sessions whose load is strictly above the best of all earlier
+//    sessions of that exercise (the first session never counts, nor does a
+//    return to an old load after a drop). Newest first.
+//    [{date, exerciseId, name, from, to, delta}]
+//  stalled: exercises last trained within STALL_RECENT_DAYS of `today`, whose
+//    best load was reached at least STALL_MIN_DAYS ago (date of its last
+//    progression, or of its first session) with >= 2 sessions since (the
+//    session that set it included). Longest-stalled first.
+//    [{exerciseId, name, load, since, days, sessions, suggestion}]
+// Two logs of one exercise on the same date count as one session (the max).
+// exercisesById may be a Map or a plain object; names fall back to the log
+// snapshot.
+export function loadInsights(logs, exercisesById, today) {
+  const getExercise = (id) =>
+    exercisesById && typeof exercisesById.get === "function"
+      ? exercisesById.get(id)
+      : exercisesById?.[id];
+
+  const byExercise = new Map();
+  for (const log of logs || []) {
+    if (!log?.exerciseId || !log.date) continue;
+    const load = workingLoad(log.sets);
+    if (load === null) continue;
+    let entry = byExercise.get(log.exerciseId);
+    if (!entry) {
+      entry = { sessions: new Map(), snapshotName: "", snapshotDate: "" };
+      byExercise.set(log.exerciseId, entry);
+    }
+    const current = entry.sessions.get(log.date);
+    if (current === undefined || load > current) entry.sessions.set(log.date, load);
+    if (log.exerciseName && log.date >= entry.snapshotDate) {
+      entry.snapshotName = log.exerciseName;
+      entry.snapshotDate = log.date;
+    }
+  }
+
+  const progressions = [];
+  const stalled = [];
+  const todayNumber = dayNumber(today);
+  for (const [exerciseId, entry] of byExercise) {
+    const name = getExercise(exerciseId)?.name || entry.snapshotName || exerciseId;
+    const sessions = [...entry.sessions.entries()]
+      .map(([date, load]) => ({ date, load }))
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+    let best = -Infinity;
+    let bestDate = null;
+    sessions.forEach((session, index) => {
+      if (session.load <= best) return;
+      if (index > 0) {
+        progressions.push({
+          date: session.date,
+          exerciseId,
+          name,
+          from: best,
+          to: session.load,
+          delta: round2(session.load - best),
+        });
+      }
+      best = session.load;
+      bestDate = session.date;
+    });
+
+    const last = sessions[sessions.length - 1];
+    const sinceLast = todayNumber - dayNumber(last.date);
+    const days = todayNumber - dayNumber(bestDate);
+    const sessionsSince = sessions.filter((session) => session.date >= bestDate).length;
+    if (sinceLast <= STALL_RECENT_DAYS && days >= STALL_MIN_DAYS && sessionsSince >= 2) {
+      stalled.push({
+        exerciseId,
+        name,
+        load: best,
+        since: bestDate,
+        days,
+        sessions: sessionsSince,
+        suggestion: round2(best + STALL_STEP),
+      });
+    }
+  }
+
+  progressions.sort(
+    (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0) || a.name.localeCompare(b.name, "pt")
+  );
+  stalled.sort((a, b) => b.days - a.days || a.name.localeCompare(b.name, "pt"));
+  return { stalled, progressions };
+}

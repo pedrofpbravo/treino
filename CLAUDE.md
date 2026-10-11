@@ -128,3 +128,10 @@ Until v4 the app also carried a bathroom/Bristol log; that feature moved to its 
 ## Local dev
 
 `python -m http.server 8095` (also in `.claude/launch.json`), then http://localhost:8095/#debug. Two gotchas: `autoPort` in launch.json announces a fresh port but still launches the server on 8095, so if 8095 is taken the process dies instantly and the announced URL answers nothing; and stale `python` servers from earlier sessions pile up on 8087/8093/8095 (four of them on one port produced `ERR_EMPTY_RESPONSE`). Check with `netstat -ano | grep :8095`, kill the strays, then start the preview. Debug hooks: `window.__state`, `window.__buildBackup`. Note: the SW caches aggressively even on localhost; when testing fresh edits, unregister the SW + delete caches or hard-reload, or stale JS will produce ghost bugs.
+
+## v7.8 additions
+
+- Histórico charts (`charts.js`): `barChart`/`lineChart` return a `.chart-scroll` wrapper; 5 slots per visible width (`CHART_SLOTS`), every item labelled, horizontal scroll, `setChart()` opens scrolled to the right. Week labels via `weekRangeLabel` ("05-11/10"), period counts via `chartPeriodCount`.
+- Exercícios filter: single-select popover (`state.muscleFilter`, `renderMuscleFilter`). Tab order: Treino, Histórico, Exercícios, Séries, Ajustes. Ajustes starts with Treinos.
+- Warm-up: day entries may carry `warmup` (boolean); none explicit on a day = default rule `warmupEntryIds` (first compound + complementary upper compound, max 2). `warmupSet` = 30% of Epley 1RM of refWeight, floor 2.5, 12 reps (1RM never shown). Sets carry `warmup: true`; excluded from Séries, badges, done, weight check, progression, refWeight. Toggle `Aq` in the permanent day editor.
+- Loads: `workingLoad` = second highest working weight. Finish no longer raises refWeight silently: `refProposals` (2+ sets above ref) opens `#sheet-progression`. Histórico > Cargas uses `loadInsights` (record-beating progressions, stalled 30+ days, suggest +2.5kg).

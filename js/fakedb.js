@@ -110,6 +110,11 @@ function baseWeight(exerciseId) {
   const prog = store.programs[0];
   const days = store.days.filter((d) => d.programId === prog.id);
   const today = todayStr();
+  // The first exercise of the first day never progresses and is never skipped,
+  // so Histórico > Cargas always shows one "mesma carga há +30 dias" row
+  // (flat since the first Monday, 36 to 42 days back); every other exercise
+  // progresses, which fills the "Progressões de carga" list.
+  const stalledExerciseId = days[0].entries[0].exerciseId;
   for (let back = 42; back >= 1; back--) {
     const date = addDaysStr(today, -back);
     const dow = new Date(date + "T12:00").getDay(); // 1..5 = Mon..Fri
@@ -117,8 +122,10 @@ function baseWeight(exerciseId) {
     const day = days[dow - 1];
     const weekIdx = Math.floor((42 - back) / 7);
     day.entries.forEach((entry, i) => {
-      if (rng() < 0.12) return; // occasionally skipped
-      const weight = baseWeight(entry.exerciseId) + Math.floor(weekIdx / 2) * 2.5;
+      const skipped = rng() < 0.12; // occasionally skipped (always drawn: keeps the sequence)
+      const isStalled = entry.exerciseId === stalledExerciseId;
+      if (skipped && !isStalled) return;
+      const weight = baseWeight(entry.exerciseId) + (isStalled ? 0 : Math.floor(weekIdx / 2) * 2.5);
       const sets = Array.from({ length: entry.targetSets }, () => ({
         reps: Math.max(1, entryReps(entry) - Math.floor(rng() * 3)),
         weight,

@@ -126,7 +126,10 @@
         <header class="tab-header">
           <h2>Exercícios</h2>
           <input id="ex-search" class="search" type="search" placeholder="Buscar exercício…" autocomplete="off">
-          <div id="muscle-chips" class="chips scroll-x"></div>
+          <div class="muscle-filter">
+            <button id="muscle-filter-btn" class="chip" type="button" aria-haspopup="listbox" aria-expanded="false">Músculo: Todos ▾</button>
+            <ul id="muscle-filter-list" class="filter-popover" role="listbox" aria-label="Filtrar por músculo" hidden></ul>
+          </div>
         </header>
 
         <div id="exercises-list" class="list"></div>
@@ -143,6 +146,7 @@
             <button class="seg-btn active" data-view="sessoes" type="button">Sessões</button>
             <button class="seg-btn" data-view="cardio" type="button">Cardio</button>
             <button class="seg-btn" data-view="progresso" type="button">Progresso</button>
+            <button class="seg-btn" data-view="cargas" type="button">Cargas</button>
           </div>
         </header>
 
@@ -178,6 +182,19 @@
           </div>
           <p id="prog-empty" class="empty" hidden>Nenhum registro com carga para este exercício.</p>
         </div>
+
+        <div id="hist-cargas" hidden>
+          <section class="group">
+            <div class="group-head"><span>Mesma carga há +30 dias</span></div>
+            <ul id="cargas-stalled-list" class="group-items"></ul>
+            <p id="cargas-stalled-empty" class="empty cargas-empty" hidden>Nenhum exercício parado há mais de 30 dias.</p>
+          </section>
+          <section class="group">
+            <div class="group-head"><span>Progressões de carga</span></div>
+            <ul id="cargas-progress-list" class="group-items"></ul>
+            <p id="cargas-progress-empty" class="empty cargas-empty" hidden>Nenhuma progressão registrada ainda.</p>
+          </section>
+        </div>
       </section>
 
       <!-- SÉRIES -->
@@ -205,13 +222,9 @@
       <section id="tab-ajustes" class="tab" hidden>
         <header class="tab-header"><h2>Ajustes</h2></header>
 
-        <h3 class="settings-h">Grupos musculares</h3>
+        <h3 class="settings-h">Treinos</h3>
         <div class="card">
-          <ul id="muscles-list" class="rows"></ul>
-          <form id="muscle-add-form" class="row-add">
-            <input id="muscle-add-name" placeholder="Novo grupo" autocomplete="off" maxlength="40">
-            <button class="btn small" type="submit">Adicionar</button>
-          </form>
+          <div id="days-manager"></div>
         </div>
 
         <h3 class="settings-h">Tipos de cardio</h3>
@@ -223,9 +236,13 @@
           </form>
         </div>
 
-        <h3 class="settings-h">Treinos</h3>
+        <h3 class="settings-h">Grupos musculares</h3>
         <div class="card">
-          <div id="days-manager"></div>
+          <ul id="muscles-list" class="rows"></ul>
+          <form id="muscle-add-form" class="row-add">
+            <input id="muscle-add-name" placeholder="Novo grupo" autocomplete="off" maxlength="40">
+            <button class="btn small" type="submit">Adicionar</button>
+          </form>
         </div>
 
         <h3 class="settings-h">Backup</h3>
@@ -261,11 +278,11 @@
       <button class="tabbtn active" data-tab="treino">
         <span class="tab-ico">🏋️</span>Treino
       </button>
-      <button class="tabbtn" data-tab="exercicios">
-        <span class="tab-ico">📋</span>Exercícios
-      </button>
       <button class="tabbtn" data-tab="historico">
         <span class="tab-ico">📈</span>Histórico
+      </button>
+      <button class="tabbtn" data-tab="exercicios">
+        <span class="tab-ico">📋</span>Exercícios
       </button>
       <button class="tabbtn" data-tab="series">
         <span class="tab-ico">📊</span>Séries
@@ -463,6 +480,18 @@
       <button type="button" id="btn-finish-check-back" class="btn ghost">Voltar e corrigir</button>
       <span class="spacer"></span>
       <button type="button" id="btn-finish-check-confirm" class="btn primary">Confirmar mesmo assim</button>
+    </div>
+  </div>
+
+  <!-- Reference-weight progression question (stacked, opened right after finishing) -->
+  <div id="sheet-progression" class="sheet sheet-stack" hidden>
+    <h3>Progressão de carga</h3>
+    <p class="hint">Você passou da referência em 2 séries ou mais. Atualizar a referência?</p>
+    <ul id="progression-list" class="rows"></ul>
+    <div class="sheet-actions">
+      <button type="button" id="btn-progression-keep" class="btn ghost">Manter</button>
+      <span class="spacer"></span>
+      <button type="button" id="btn-progression-apply" class="btn primary">Atualizar ref</button>
     </div>
   </div>
 

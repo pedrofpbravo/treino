@@ -19,10 +19,11 @@ import {
   PROG4X_PROGRAM_NAME,
   todayStr,
   fmtDate,
-  fmtDateShortMonth,
   fmtDateFull,
   addDaysStr,
   weekStartStr,
+  weekRangeLabel,
+  chartPeriodCount,
   logDocId,
   prefillSets,
   resolveWorkoutExercise,
@@ -33,6 +34,12 @@ import {
   draftAllDone,
   recordedSets,
   draftFromLog,
+  isWarmupSet,
+  workingSets,
+  warmupEntryIds,
+  warmupSet,
+  WARMUP_MAX_PER_DAY,
+  WARMUP_REST_SECS,
   cycleProgress,
   entryReps,
   normalizeDecimalInput,
@@ -46,6 +53,8 @@ import {
   setsLabel,
   groupSessions,
   progressionSeries,
+  refProposals,
+  loadInsights,
   exercisesFromLogs,
   exerciseHistory,
   weeklyFrequency,
@@ -63,7 +72,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.7";
+const APP_VERSION = "v7.8";
 
 const $ = (id) => document.getElementById(id);
 
@@ -200,7 +209,7 @@ const state = {
   programId: localStorage.getItem("gym:program") || null,
   dayId: localStorage.getItem("gym:day") || null,
   search: "",
-  muscleFilters: new Set(),
+  muscleFilter: null, // id of the selected muscle group, null = Todos
   histView: "sessoes",
   cardioChartView: "week",
   seriesView: "week",
@@ -214,6 +223,7 @@ const state = {
   detailExerciseId: null,
   detailEffectiveExerciseId: null,
   exlogExerciseId: null, // exercise shown in the full-log sheet
+  progressionRows: [], // progression sheet: [{exerciseId, name, from, to, delta, on}]
   reorderMode: false,
   draftEntries: [], // day sheet: [{exerciseId, targetSets, repMin, repMax}]
   draftPrimaryMuscleId: null,
@@ -243,12 +253,23 @@ function openSheet(id) {
   $(id).hidden = false;
 }
 
+// A cycle celebration that came due while the progression sheet was open
+// waits here and is shown as soon as that sheet closes (see closeSheets).
+let deferredCycle = null;
+
 function closeSheets() {
+  const hadProgression = !$("sheet-progression").hidden;
   state.exlogExerciseId = null;
   state.detailExerciseId = null;
   state.detailEffectiveExerciseId = null;
+  state.progressionRows = [];
   $("sheet-backdrop").hidden = true;
   document.querySelectorAll(".sheet").forEach((s) => (s.hidden = true));
+  if (hadProgression && deferredCycle) {
+    const pending = deferredCycle;
+    deferredCycle = null;
+    showCompletedCycle(pending.program, pending.progress);
+  }
 }
 
 function muscleName(id) {
@@ -549,10 +570,11 @@ function renderWorkout(cycle = null) {
     excludedLogKeys,
   };
 
+  const warmupIds = warmupEntryIds(entries, state.exercisesById);
   let done = 0;
   resolvedEntries.forEach(({ entry, resolved }) => {
     if (draftAllDone(draftSetsFor(today, day.id, entry.exerciseId))) done++;
-    listEl.appendChild(buildWorkoutCard(entry, day, resolved, suggestionContext));
+    listEl.appendChild(buildWorkoutCard(entry, day, resolved, suggestionContext, warmupIds));
   });
   $("day-progress").textContent =
     entries.length > 0 ? `${done}/${entries.length} feitos hoje` : "";
@@ -691,12 +713,14 @@ function makeDraggableList(list) {
 // The card renders from the local draft, never from saved logs: "done"
 // (peach fill) needs every set checked, the in-progress accent edge needs
 // at least one; a merely opened card looks idle.
-function buildWorkoutCard(entry, day, resolved, suggestionContext) {
+function buildWorkoutCard(entry, day, resolved, suggestionContext, warmupIds) {
   const today = todayStr();
   const ex = resolved.exercise;
   const sets = draftSetsFor(today, day.id, entry.exerciseId);
   const started = !!sets;
-  const doneCount = started ? sets.filter(draftSetDone).length : 0;
+  // The warm-up set never counts toward the badge, the edge or "feito".
+  const working = started ? workingSets(sets) : [];
+  const doneCount = working.filter(draftSetDone).length;
   const isDone = started && draftAllDone(sets);
   const inProgress = started && doneCount > 0 && !isDone;
   const collapsedKey = `${day.id}|${entry.exerciseId}`;
@@ -748,7 +772,7 @@ function buildWorkoutCard(entry, day, resolved, suggestionContext) {
   if (started) {
     const status = document.createElement("span");
     status.className = "wc-status";
-    status.textContent = isDone ? "✓ feito" : `${doneCount}/${sets.length} séries`;
+    status.textContent = isDone ? "✓ feito" : `${doneCount}/${working.length} séries`;
     ref.appendChild(status);
   }
   main.appendChild(ref);
@@ -824,9 +848,15 @@ function buildWorkoutCard(entry, day, resolved, suggestionContext) {
       const savedLog = state.logsById.get(
         logDocId({ date: today, dayId: day.id, exerciseId: resolved.exerciseId })
       );
-      const seed = savedLog && Array.isArray(savedLog.sets) && savedLog.sets.length > 0
-        ? draftFromLog(savedLog)
-        : prefillSets(entry, parseRefWeight(ex?.refWeight));
+      let seed;
+      if (savedLog && Array.isArray(savedLog.sets) && savedLog.sets.length > 0) {
+        seed = draftFromLog(savedLog);
+      } else {
+        const refNum = parseRefWeight(ex?.refWeight);
+        seed = prefillSets(entry, refNum);
+        // one light warm-up set first, for the day's 1 to 2 warm-up exercises
+        if (warmupIds?.has(entry.exerciseId)) seed.unshift(warmupSet(refNum, entryReps(entry)));
+      }
       setDraftSets(today, day.id, entry.exerciseId, seed);
       renderTreino();
       return;
@@ -971,14 +1001,19 @@ function submitDetailForm(e) {
 
   const targetSets = clampTargetSets($("det-sets").value);
   const reps = Math.max(1, Math.floor(Number($("det-reps").value)) || 10);
+  const keepWarmup = (en) => (typeof en.warmup === "boolean" ? { warmup: en.warmup } : {});
   const entries = (day.entries || []).map((en) =>
-    en.exerciseId === entry.exerciseId ? { exerciseId: entry.exerciseId, targetSets, reps } : en
+    en.exerciseId === entry.exerciseId
+      ? { exerciseId: entry.exerciseId, targetSets, reps, ...keepWarmup(en) }
+      : en
   );
   db.updateDay(day.id, { name: day.name, entries }).catch(() => toast("Erro ao salvar."));
   if (Array.isArray(dayDraft?.__entries) &&
       dayDraft.__entries.some((en) => en.exerciseId === entry.exerciseId)) {
     const draftEntries = dayDraft.__entries.map((en) =>
-      en.exerciseId === entry.exerciseId ? { exerciseId: entry.exerciseId, targetSets, reps } : en
+      en.exerciseId === entry.exerciseId
+        ? { exerciseId: entry.exerciseId, targetSets, reps, ...keepWarmup(en) }
+        : en
     );
     setDraftEntries(today, day.id, draftEntries);
   }
@@ -1058,20 +1093,26 @@ function renderExerciseLog() {
     }
 
     const ul = document.createElement("ul");
-    ul.className = "group-items";
+    ul.className = "group-items" + (session.sets.some((set) => set.warmup) ? " has-warmup" : "");
     if (session.sets.length === 0) {
       const li = document.createElement("li");
       li.className = "exlog-set";
       li.textContent = "Sem séries registradas";
       ul.appendChild(li);
     }
-    session.sets.forEach((set, idx) => {
+    // warm-up first and unnumbered; working sets are numbered from 1
+    const orderedSets = [
+      ...session.sets.filter((set) => set.warmup),
+      ...session.sets.filter((set) => !set.warmup),
+    ];
+    let workingNumber = 0;
+    orderedSets.forEach((set) => {
       const li = document.createElement("li");
       li.className = "exlog-set" + (set.done ? "" : " pending");
 
       const n = document.createElement("span");
       n.className = "exlog-set-n";
-      n.textContent = `Série ${idx + 1}`;
+      n.textContent = set.warmup ? "Aquecimento" : `Série ${++workingNumber}`;
 
       const val = document.createElement("span");
       val.className = "exlog-set-val";
@@ -1200,7 +1241,7 @@ function reviewAndFinishWorkout() {
     if (recorded.length === 0 || resolved.missingSubstitute) return;
     const ex = resolved.exercise;
     const reference = referenceWeightFor(state.logs, resolved.exerciseId, today, ex?.refWeight);
-    flagSuspiciousSets(recorded, reference).forEach(({ index, weight }) => {
+    flagSuspiciousSets(workingSets(recorded), reference).forEach(({ index, weight }) => {
       suspicious.push({
         name: ex?.name || resolved.exerciseId,
         series: index + 1,
@@ -1282,23 +1323,22 @@ function confirmFinishWorkout() {
       programName: program?.name || "",
       sets: recorded,
     }).catch(() => toast("Erro ao salvar exercícios do treino."));
-
-    const weights = recorded
-      .map((set) => set.weight)
-      .filter((weight) => weight !== null && Number.isFinite(weight));
-    const top = weights.length > 0 ? Math.max(...weights) : null;
-    const currentRefWeight = parseRefWeight(ex?.refWeight);
-    if (ex && top !== null && (currentRefWeight === null || top > currentRefWeight)) {
-      db.updateExercise(ex.id, {
-        name: ex.name,
-        primaryMuscleId: ex.primaryMuscleId,
-        secondaryMuscleIds: ex.secondaryMuscleIds || [],
-        similarIds: ex.similarIds || [],
-        refWeight: String(top),
-        note: ex.note || "",
-      }).catch(() => toast("Erro ao atualizar peso de referência."));
-    }
   });
+
+  // The reference weight is never raised silently: when at least 2 checked
+  // working sets of an exercise beat its reference, the progression sheet
+  // asks first (see openProgressionSheet).
+  const proposals = refProposals(
+    plans
+      .filter(({ resolved, recorded }) =>
+        recorded.length > 0 && !resolved.missingSubstitute && resolved.exercise)
+      .map(({ resolved, recorded }) => ({
+        exerciseId: resolved.exerciseId,
+        name: resolved.exercise.name || resolved.exerciseId,
+        refWeight: resolved.exercise.refWeight,
+        sets: recorded,
+      }))
+  );
   const pendingSessionId = sessionId(today, day.id);
   pendingFinishToastId = pendingSessionId;
   pendingFinishSkippedCount = missingSubstitutes;
@@ -1320,6 +1360,66 @@ function confirmFinishWorkout() {
   }
   cancelTimer();
   closeSheets();
+  // Post-finish order: the summary sheet closes, the progression question
+  // opens on top (right now, synchronously) and the "Semana concluída" cycle
+  // sheet, which arrives later with the sessions snapshot, waits for it.
+  if (proposals.length > 0) openProgressionSheet(proposals);
+}
+
+function progressionLabel(row) {
+  return row.from === null
+    ? `${row.name} · sem ref → ${row.to}kg`
+    : `${row.name} · ${row.from} → ${row.to}kg (+${row.delta}kg)`;
+}
+
+function openProgressionSheet(proposals) {
+  state.progressionRows = proposals.map((proposal) => ({ ...proposal, on: true }));
+  const list = $("progression-list");
+  list.innerHTML = "";
+  state.progressionRows.forEach((row) => {
+    const li = document.createElement("li");
+    li.className = "row-line progression-row";
+    const label = document.createElement("label");
+    label.className = "progression-label";
+    const text = document.createElement("span");
+    text.className = "progression-text";
+    text.textContent = progressionLabel(row);
+    const toggle = document.createElement("input");
+    toggle.type = "checkbox";
+    toggle.className = "switch";
+    toggle.checked = true;
+    toggle.setAttribute("role", "switch");
+    toggle.setAttribute("aria-label", `Atualizar referência de ${row.name}`);
+    toggle.addEventListener("change", () => {
+      row.on = toggle.checked;
+    });
+    label.append(text, toggle);
+    li.appendChild(label);
+    list.appendChild(li);
+  });
+  openSheet("sheet-progression");
+}
+
+// "Atualizar ref": writes refWeight for the toggled rows through the normal
+// exercise update path. "Manter" and the backdrop just close (closeSheets).
+function applyProgression() {
+  const rows = state.progressionRows.filter((row) => row.on);
+  let updated = 0;
+  rows.forEach((row) => {
+    const ex = state.exercisesById.get(row.exerciseId);
+    if (!ex) return;
+    updated++;
+    db.updateExercise(ex.id, {
+      name: ex.name,
+      primaryMuscleId: ex.primaryMuscleId,
+      secondaryMuscleIds: ex.secondaryMuscleIds || [],
+      similarIds: ex.similarIds || [],
+      refWeight: String(row.to),
+      note: ex.note || "",
+    }).catch(() => toast("Erro ao atualizar peso de referência."));
+  });
+  closeSheets();
+  if (updated > 0) toast("Referência atualizada.");
 }
 
 function unfinishWorkout() {
@@ -1348,22 +1448,30 @@ function buildSetsEditor(entry, day, sets) {
     renderTreino();
   };
 
+  // The warm-up set is the first row, labelled "Aq"; working sets are numbered
+  // from 1 and are the only ones MAX_SETS and the remove lock count.
+  const workingTotal = workingSets(sets).length;
+  let workingNumber = 0;
   sets.forEach((set, idx) => {
+    const isWarm = isWarmupSet(set);
+    if (!isWarm) workingNumber++;
+    const setName = isWarm ? "aquecimento" : `série ${workingNumber}`;
+
     const row = document.createElement("div");
-    row.className = "set-row";
+    row.className = "set-row" + (isWarm ? " warmup" : "");
 
     const n = document.createElement("span");
     n.className = "set-n";
-    n.textContent = `Série ${idx + 1}`;
+    n.textContent = isWarm ? "Aq" : `Série ${workingNumber}`;
 
     const done = document.createElement("button");
     done.type = "button";
     done.className = "set-check" + (set.done ? " on" : "");
     done.textContent = "✓";
-    done.setAttribute("aria-label", set.done ? `Desmarcar série ${idx + 1}` : `Concluir série ${idx + 1}`);
+    done.setAttribute("aria-label", set.done ? `Desmarcar ${setName}` : `Concluir ${setName}`);
     done.addEventListener("click", () => {
       sets[idx].done = !sets[idx].done;
-      if (sets[idx].done) startTimer(DEFAULT_REST_SECS);
+      if (sets[idx].done) startTimer(isWarm ? WARMUP_REST_SECS : DEFAULT_REST_SECS);
       syncCollapsedState();
       save();
     });
@@ -1407,8 +1515,8 @@ function buildSetsEditor(entry, day, sets) {
     rm.type = "button";
     rm.className = "set-remove";
     rm.textContent = "✕";
-    rm.setAttribute("aria-label", `Remover série ${idx + 1}`);
-    rm.disabled = sets.length <= 1;
+    rm.setAttribute("aria-label", `Remover ${setName}`);
+    rm.disabled = !isWarm && workingTotal <= 1;
     rm.addEventListener("click", () => {
       sets.splice(idx, 1);
       syncCollapsedState();
@@ -1423,10 +1531,11 @@ function buildSetsEditor(entry, day, sets) {
   add.type = "button";
   add.className = "btn-add-set";
   add.textContent = "＋ série";
-  add.disabled = sets.length >= MAX_SETS;
+  add.disabled = workingTotal >= MAX_SETS;
   add.addEventListener("click", () => {
-    if (sets.length >= MAX_SETS) return;
-    const prev = sets[sets.length - 1];
+    const working = workingSets(sets);
+    if (working.length >= MAX_SETS) return;
+    const prev = working[working.length - 1];
     sets.push({ reps: prev?.reps ?? entryReps(entry), weight: prev?.weight ?? null, done: false });
     syncCollapsedState();
     save();
@@ -1454,6 +1563,13 @@ function openDaySheet(dayId, { scope = "permanent" } = {}) {
       ? effectiveDayEntries(day, dayDraftFor(todayStr(), day.id))
       : day?.entries || []
   ).map((entry) => ({ ...entry }));
+  if (!todayOnly) {
+    // show the resolved state (explicit field or default rule) in the toggles
+    const resolvedWarmups = warmupEntryIds(state.draftEntries, state.exercisesById);
+    state.draftEntries.forEach((entry) => {
+      entry.warmup = resolvedWarmups.has(entry.exerciseId);
+    });
+  }
   $("day-ex-search").value = "";
   $("day-ex-results").hidden = true;
   $("btn-day-delete").hidden = todayOnly || !day;
@@ -1535,9 +1651,38 @@ function renderDayEntries() {
       renderDayEntries();
     });
 
-    li.append(name, sets, x1, reps, up, down, rm);
+    if (state.dayEditScope === "today") {
+      li.append(name, sets, x1, reps, up, down, rm);
+    } else {
+      const aq = document.createElement("button");
+      aq.type = "button";
+      aq.className = "entry-aq";
+      aq.textContent = "Aq";
+      const isOn = warmupEntryIds(state.draftEntries, state.exercisesById).has(entry.exerciseId);
+      aq.classList.toggle("on", isOn);
+      aq.setAttribute("aria-pressed", String(isOn));
+      aq.setAttribute("aria-label", `Série de aquecimento em ${name.textContent}`);
+      aq.addEventListener("click", () => toggleEntryWarmup(entry.exerciseId));
+      li.append(name, sets, x1, reps, aq, up, down, rm);
+    }
     ul.appendChild(li);
   });
+}
+
+// Permanent day editor: flips the warm-up flag of one entry. The first flip
+// materializes the resolved state (default rule included) as explicit flags on
+// every entry; a third warm-up in the same day is refused.
+function toggleEntryWarmup(exerciseId) {
+  const current = warmupEntryIds(state.draftEntries, state.exercisesById);
+  const turningOn = !current.has(exerciseId);
+  if (turningOn && current.size >= WARMUP_MAX_PER_DAY) {
+    toast("Máximo de 2 aquecimentos por dia.");
+    return;
+  }
+  state.draftEntries.forEach((entry) => {
+    entry.warmup = entry.exerciseId === exerciseId ? turningOn : current.has(entry.exerciseId);
+  });
+  renderDayEntries();
 }
 
 function renderDayExResults() {
@@ -1575,10 +1720,16 @@ function renderDayExResults() {
 
 function submitDayForm(e) {
   e.preventDefault();
+  // Permanent save writes an explicit warmup true/false on EVERY entry; the
+  // today-only override just carries whatever flag the entry already had.
+  const resolvedWarmups = warmupEntryIds(state.draftEntries, state.exercisesById);
   const entries = state.draftEntries.map((en) => ({
     exerciseId: en.exerciseId,
     targetSets: clampTargetSets(en.targetSets),
     reps: entryReps(en),
+    ...(state.dayEditScope === "today"
+      ? (typeof en.warmup === "boolean" ? { warmup: en.warmup } : {})
+      : { warmup: resolvedWarmups.has(en.exerciseId) }),
   }));
   if (state.dayEditScope === "today") {
     const day = state.days.find((item) => item.id === state.editingDayId);
@@ -1664,29 +1815,53 @@ function renderProgramsList() {
 function exerciseMatches(ex) {
   const q = normalize(state.search);
   if (q && !(ex.nameLower || normalize(ex.name)).includes(q)) return false;
-  if (state.muscleFilters.size === 0) return true;
+  if (!state.muscleFilter) return true;
   const ids = [ex.primaryMuscleId, ...(ex.secondaryMuscleIds || [])];
-  return ids.some((id) => state.muscleFilters.has(id));
+  return ids.includes(state.muscleFilter);
 }
 
-function renderMuscleChips() {
-  const wrap = $("muscle-chips");
-  wrap.innerHTML = "";
-  state.muscles.forEach((m) => {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "chip" + (state.muscleFilters.has(m.id) ? " on" : "");
-    chip.textContent = m.name;
-    chip.addEventListener("click", () => {
-      if (state.muscleFilters.has(m.id)) state.muscleFilters.delete(m.id);
-      else state.muscleFilters.add(m.id);
-      renderMuscleChips();
+function setMuscleFilterOpen(open) {
+  $("muscle-filter-list").hidden = !open;
+  $("muscle-filter-btn").setAttribute("aria-expanded", String(open));
+}
+
+// Pill button + popover list (single selection). Rebuilt on every muscle
+// snapshot and after each pick; the open state lives in the DOM only.
+function renderMuscleFilter() {
+  if (state.muscleFilter && !state.muscles.some((m) => m.id === state.muscleFilter)) {
+    state.muscleFilter = null; // the selected group no longer exists
+  }
+  const selected = state.muscles.find((m) => m.id === state.muscleFilter);
+  const btn = $("muscle-filter-btn");
+  btn.textContent = `Músculo: ${selected ? selected.name : "Todos"} ▾`;
+  btn.classList.toggle("on", Boolean(selected));
+
+  const list = $("muscle-filter-list");
+  list.innerHTML = "";
+  [{ id: null, name: "Todos" }, ...state.muscles].forEach((m) => {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(m.id === state.muscleFilter));
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "filter-option" + (m.id === state.muscleFilter ? " selected" : "");
+    const name = document.createElement("span");
+    name.textContent = m.name;
+    const check = document.createElement("span");
+    check.className = "filter-check";
+    check.textContent = m.id === state.muscleFilter ? "✓" : "";
+    row.append(name, check);
+    row.addEventListener("click", () => {
+      state.muscleFilter = m.id;
+      setMuscleFilterOpen(false);
+      renderMuscleFilter();
       renderExercises();
       // Filtering can shrink the list below the current scroll offset; the
       // abrupt clamp reads as a broken layout. Deterministic: back to the top.
       window.scrollTo(0, 0);
     });
-    wrap.appendChild(chip);
+    li.appendChild(row);
+    list.appendChild(li);
   });
 }
 
@@ -2220,26 +2395,100 @@ function renderSeries() {
 
 // ---------- histórico ----------
 
+// Charts open scrolled fully to the right (most recent item visible). A hidden
+// tab or view has no layout (scrollWidth 0), so switchTab calls this again.
+function scrollChartsToEnd(root) {
+  root.querySelectorAll(".chart-scroll").forEach((el) => {
+    el.scrollLeft = el.scrollWidth;
+  });
+}
+
+function setChart(el, html) {
+  el.innerHTML = html;
+  scrollChartsToEnd(el);
+  requestAnimationFrame(() => scrollChartsToEnd(el));
+}
+
 function renderHist() {
   $("hist-sessoes").hidden = state.histView !== "sessoes";
   $("hist-cardio").hidden = state.histView !== "cardio";
   $("hist-progresso").hidden = state.histView !== "progresso";
+  $("hist-cargas").hidden = state.histView !== "cargas";
   document.querySelectorAll("#hist-seg .seg-btn").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === state.histView)
   );
   if (state.histView === "sessoes") renderSessions();
   else if (state.histView === "cardio") renderCardio();
+  else if (state.histView === "cargas") renderCargas();
   else renderProgress();
 }
 
+// Histórico > Cargas: stalled exercises and load progressions, all derived
+// from the logs (loadInsights in logic.js), nothing stored.
+function renderCargas() {
+  const { stalled, progressions } = loadInsights(state.logs, state.exercisesById, todayStr());
+
+  const nameButton = (item, extraClass = "") => {
+    const name = document.createElement("button");
+    name.type = "button";
+    name.className = `item-name exercise-link ${extraClass}`.trim();
+    name.textContent = item.name;
+    name.addEventListener("click", () => openExerciseFromHistory(item.exerciseId));
+    return name;
+  };
+
+  const stalledList = $("cargas-stalled-list");
+  stalledList.innerHTML = "";
+  stalled.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "item-row cargas-row";
+    const main = document.createElement("div");
+    main.className = "item-main";
+    const sub = document.createElement("span");
+    sub.className = "item-sub";
+    sub.textContent =
+      `${item.load}kg desde ${fmtDate(item.since)} (${item.days} dias) · tente ${item.suggestion}kg`;
+    main.append(nameButton(item), sub);
+    li.appendChild(main);
+    stalledList.appendChild(li);
+  });
+  stalledList.hidden = stalled.length === 0;
+  $("cargas-stalled-empty").hidden = stalled.length > 0;
+
+  const progressList = $("cargas-progress-list");
+  progressList.innerHTML = "";
+  progressions.forEach((item) => {
+    const li = document.createElement("li");
+    li.className = "item-row cargas-row";
+    const line = document.createElement("div");
+    line.className = "cargas-line";
+    const date = document.createElement("span");
+    date.className = "cargas-date";
+    date.textContent = fmtDate(item.date);
+    const change = document.createElement("span");
+    change.className = "cargas-change";
+    change.textContent = `${item.from} → ${item.to}kg (+${item.delta}kg)`;
+    line.append(date, " · ", nameButton(item), " · ", change);
+    li.appendChild(line);
+    progressList.appendChild(li);
+  });
+  progressList.hidden = progressions.length === 0;
+  $("cargas-progress-empty").hidden = progressions.length > 0;
+}
+
 function renderSessions() {
-  const weeks = weeklyFrequency(state.logs, 8, todayStr(), state.cardio.map((entry) => entry.date));
-  $("freq-chart").innerHTML = barChart(
-    weeks.map((w) => ({
-      label: `${w.start.slice(8)}-${fmtDate(addDaysStr(w.start, 6))}`,
-      value: w.count,
-    })),
-    { showLabels: "ends-mid" }
+  const cardioDates = state.cardio.map((entry) => entry.date);
+  const nWeeks = chartPeriodCount(
+    [...state.logs.map((log) => log.date), ...cardioDates],
+    todayStr(),
+    "week",
+    5,
+    52
+  );
+  const weeks = weeklyFrequency(state.logs, nWeeks, todayStr(), cardioDates);
+  setChart(
+    $("freq-chart"),
+    barChart(weeks.map((w) => ({ label: weekRangeLabel(w.start), value: w.count })))
   );
 
   const listEl = $("sessions-list");
@@ -2299,7 +2548,8 @@ function renderSessions() {
 }
 
 function renderCardio() {
-  const weeks = weeklyCardio(state.cardio, 12, todayStr());
+  const today = todayStr();
+  const weeks = weeklyCardio(state.cardio, 12, today); // list below the chart
   const chartEl = $("cardio-chart");
   let controls = $("cardio-chart-controls");
   if (!controls) {
@@ -2321,29 +2571,27 @@ function renderCardio() {
     controls.appendChild(chip);
   });
 
+  const cardioDates = state.cardio.map((entry) => entry.date);
   let bars;
-  let showLabels;
   let title;
   if (state.cardioChartView === "day") {
-    bars = dailyCardio(state.cardio, 14, todayStr())
-      .map((day) => ({ label: day.label, value: day.minutes }));
-    showLabels = "ends";
+    const nDays = chartPeriodCount(cardioDates, today, "day", 5, 35);
+    bars = dailyCardio(state.cardio, nDays, today)
+      .map((day) => ({ label: fmtDate(day.date), value: day.minutes }));
     title = "Cardio por dia";
   } else if (state.cardioChartView === "month") {
-    bars = monthlyCardio(state.cardio, 6, todayStr())
+    const nMonths = chartPeriodCount(cardioDates, today, "month", 5, 24);
+    bars = monthlyCardio(state.cardio, nMonths, today)
       .map((month) => ({ label: month.label, value: month.minutes }));
-    showLabels = "all";
     title = "Cardio por mês";
   } else {
-    bars = weeks.map((week) => ({
-      label: `${week.weekStart.slice(8)}-${fmtDateShortMonth(addDaysStr(week.weekStart, 6))}`,
-      value: week.totalMinutes,
-    }));
-    showLabels = "ends";
+    const nWeeks = chartPeriodCount(cardioDates, today, "week", 5, 52);
+    bars = weeklyCardio(state.cardio, nWeeks, today)
+      .map((week) => ({ label: weekRangeLabel(week.weekStart), value: week.totalMinutes }));
     title = "Cardio por semana";
   }
   chartEl.closest(".chart-card").querySelector(".chart-title").textContent = title;
-  chartEl.innerHTML = barChart(bars, { showLabels, color: "var(--accent)" });
+  setChart(chartEl, barChart(bars, { color: "var(--accent)" }));
 
   const list = $("cardio-history-list");
   list.innerHTML = "";
@@ -2415,9 +2663,7 @@ function renderProgress() {
     ? progressionSeries(state.logs, state.progExerciseId)
     : [];
   const chartEl = $("prog-chart");
-  chartEl.innerHTML = lineChart(
-    series.slice(-24).map((p) => ({ label: fmtDate(p.date), value: p.weight }))
-  );
+  setChart(chartEl, lineChart(series.map((p) => ({ label: fmtDate(p.date), value: p.weight }))));
   chartEl.parentElement.hidden = series.length === 0;
 
   const table = $("prog-table");
@@ -3264,7 +3510,7 @@ function onMuscles(muscles) {
   applyMuscleTaxonomy();
   applyProg3xMigration();
   applyProg4xMigration();
-  renderMuscleChips();
+  renderMuscleFilter();
   renderMusclesManager();
   renderExercises();
   renderTreino();
@@ -3290,6 +3536,7 @@ function onExercises(exercises) {
   renderExercises();
   renderTreino();
   renderSeries();
+  if (state.histView === "cargas") renderCargas();
 }
 
 function onPrograms(programs) {
@@ -3337,6 +3584,12 @@ let pendingFinishToastId = null;
 let pendingFinishSkippedCount = 0;
 
 function showCompletedCycle(program, progress) {
+  // The progression question is open (stacked on top): hold the celebration
+  // until it closes, otherwise it would open hidden underneath.
+  if (!$("sheet-progression").hidden) {
+    deferredCycle = { program, progress };
+    return;
+  }
   $("cycle-sub").textContent =
     `Você concluiu os ${progress.total} treinos de ${program.name}.`;
   const list = $("cycle-list");
@@ -3382,7 +3635,8 @@ function onSessions(sessions) {
         toast(skipped === 1
           ? "Treino registrado; substituto removido ignorado."
           : `Treino registrado; ${skipped} substitutos removidos ignorados.`);
-      } else if (!shouldCelebrate) {
+      } else if (!shouldCelebrate && $("sheet-progression").hidden) {
+        // (skipped while the progression question is open: the toast would sit on top of it)
         toast("Treino registrado. Bom descanso!");
       }
     }
@@ -3419,6 +3673,7 @@ function switchTab(tab) {
     b.classList.toggle("active", b.dataset.tab === tab)
   );
   if (tab === "series") renderSeries();
+  if (tab === "historico") scrollChartsToEnd($("tab-historico"));
   updateTimerVisibility();
   window.scrollTo(0, 0);
 }
@@ -3572,6 +3827,8 @@ function wire() {
     confirmFinishWorkout();
   });
   $("btn-finish-reopen").addEventListener("click", unfinishWorkout);
+  $("btn-progression-keep").addEventListener("click", closeSheets);
+  $("btn-progression-apply").addEventListener("click", applyProgression);
   $("btn-add-cardio").addEventListener("click", openCardioSheet);
   $("cardio-type").addEventListener("change", updateCardioTypeNote);
   $("cardio-form").addEventListener("submit", submitCardio);
@@ -3614,6 +3871,13 @@ function wire() {
   $("ex-search").addEventListener("input", (e) => {
     state.search = e.target.value;
     renderExercises();
+  });
+  $("muscle-filter-btn").addEventListener("click", () => {
+    setMuscleFilterOpen($("muscle-filter-list").hidden);
+  });
+  // A tap anywhere outside the button and the list closes it without changing the filter.
+  document.addEventListener("pointerdown", (e) => {
+    if (!e.target.closest(".muscle-filter")) setMuscleFilterOpen(false);
   });
   $("fab-new-exercise").addEventListener("click", () => openExerciseSheet(null));
   $("exercise-form").addEventListener("submit", submitExerciseForm);
