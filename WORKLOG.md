@@ -819,3 +819,15 @@ UI do Iniciar/Finalizar estava feia (pillão preto colado nos cards); mais respi
 - Em novo dispositivo (ou localStorage limpo) com um ciclo já completo dentro da janela, o popup aparece uma vez indevidamente. Aceito.
 - `CLAUDE.md` (não commitado antes desta sessão) diz "nunca use `codex exec`", mas o plugin auto-nega todo comando nesta máquina e o `codex exec` foi o que funcionou. Vale revisar essa seção com o Pedro.
 - `scratchpad/` continua fora do git (inclui logs do Codex de ~1,2MB). Sem `.gitignore` no repo.
+
+## v7.7: backfill do treino perdido de 04/10 (2026-10-11)
+
+- **Problema:** Pedro treinou Lower (Full Body + Upper Lower) em 04/10, mas nada chegou ao Firestore. O backup de 03/10 (Downloads) é anterior ao treino. O Firebase MCP deu timeout. Hipótese principal: "Finalizar treino" não chegou a gravar (o rascunho é podado no dia seguinte).
+- **Decisões do Pedro:** leg press 4×10 a 120 (substitui hack squat), hip thrust 3×12 a 40 (substitui RDL), extensora 3×10 a 60, flexora 3×10 a 57.5, abdominal 3×10 a 62.5, bíceps máquina 2×10 a 22.5 (extra). Sessão marcada como finalizada. refWeight da extensora sobe para 60 (só sobe).
+- **Brief:** `scratchpad/brief-v77-backfill-1004.md`. `resolveWorkoutBackfill` puro em logic.js, `db.backfillWorkout` em um writeBatch, flag `gym:backfill-1004-v7-7`, não sobrescreve ids existentes, roda em #debug sem persistir a flag. Bump v7.7.
+- **Disparo:** `codex exec` em background, log em `scratchpad/codex-v77.log`.
+- **Bloqueio (11/10):** `codex` sumiu do PATH (a pasta `AppData/Local/Programs/OpenAI/Codex/bin` não existe mais). O CLI 0.159.2 em `~/.codex/.sandbox-bin/codex.exe` inicia, mas todo comando falha com `failed to spawn code-mode host ...\codex-code-mode-host.exe: The system cannot find the file specified`. Zero arquivos alterados. Parece uma atualização do app Codex pela metade (existe um `.staging` em `~/.codex/packages/app-server-daemon/releases`). Pedido ao Pedro: fechar e reabrir o app Codex, depois redisparar o mesmo brief.
+- **Redirecionamento (11/10):** Pedro mandou ignorar o Codex e usar um agente Sonnet para implementar. O mesmo brief foi para um subagente general-purpose (sonnet).
+- **Resultado:** `node scratchpad/test-backfill-1004-v77.mjs` deu 11 PASS e BACKFILL_OK. `node --check` ok nos 5 arquivos. Diff dentro do escopo (db.js, fakedb.js, logic.js, main.js, sw.js). O fakedb ganhou `ex-hack_squat` só para debug. refWeight é gravado como String, igual ao bump do Finalizar.
+- **Revisão (Fable):** li o diff inteiro. No #debug (SW e caches limpos): 6 logs de 04/10 com séries, pesos e substitutedForId certos, sessão `sess-2026-10-04-day-fb-ul-lower`, extensora com ref "60", flag não persistida, console sem erros. Histórico mostra "dom, 04/10/2026 · Lower" com os 6 exercícios.
+- **Risco aceito:** a regra "nunca sobrescreve" depende do snapshot do cache. Se o primeiro snapshot vier incompleto, um log existente de 04/10 poderia ser sobrescrito. Em produção não existe nenhum log de 04/10, então não há o que perder.

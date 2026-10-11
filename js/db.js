@@ -446,6 +446,45 @@ export function unfinishSession(id) {
   return deleteDoc(doc(fs, "sessions", id));
 }
 
+// v7.7 one-time backfill of a workout that never reached Firestore: the logs,
+// the finished session (null = already there) and the refWeight bumps in ONE
+// batch. Same fields as saveLog / finishSession; refWeight is stored as a
+// string, like the "Finalizar treino" bump does.
+export function backfillWorkout({ logs, session, refWeightUpdates }) {
+  const batch = writeBatch(fs);
+  (logs || []).forEach((log) => {
+    batch.set(doc(fs, "logs", logDocId(log)), {
+      date: log.date,
+      programId: log.programId,
+      dayId: log.dayId,
+      exerciseId: log.exerciseId,
+      substitutedForId: log.substitutedForId || null,
+      exerciseName: log.exerciseName,
+      dayName: log.dayName,
+      programName: log.programName,
+      sets: log.sets,
+      ts: serverTimestamp(),
+    });
+  });
+  if (session) {
+    batch.set(doc(fs, "sessions", "sess-" + session.date + "-" + session.dayId), {
+      date: session.date,
+      programId: session.programId,
+      dayId: session.dayId,
+      dayName: session.dayName,
+      programName: session.programName,
+      finishedAt: serverTimestamp(),
+    });
+  }
+  (refWeightUpdates || []).forEach(({ id, refWeight }) => {
+    batch.update(doc(fs, "exercises", id), {
+      refWeight: String(refWeight),
+      updatedAt: serverTimestamp(),
+    });
+  });
+  return batch.commit();
+}
+
 // ---------- cardio ----------
 
 export function createCardio(data) {

@@ -13,6 +13,8 @@ import {
   normalize,
   resolveProg3xEntries,
   resolveProg4x,
+  resolveWorkoutBackfill,
+  BACKFILL_2026_10_04,
   PROG4X_PROGRAM_ID,
   PROG4X_PROGRAM_NAME,
   todayStr,
@@ -61,7 +63,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.6";
+const APP_VERSION = "v7.7";
 
 const $ = (id) => document.getElementById(id);
 
@@ -2848,6 +2850,7 @@ const MUSCLE_REVIEW_KEY = "gym:muscle-review-v7-2";
 const MUSCLE_TAXONOMY_KEY = "gym:muscle-taxonomy-v7-3";
 const PROG3X_KEY = "gym:prog3x-v7-4";
 const PROG4X_KEY = "gym:prog4x-v7-6";
+const BACKFILL_1004_KEY = "gym:backfill-1004-v7-7";
 const FINISH_BACKFILL_DATES = ["2026-09-05"];
 const MUSCLE_TAXONOMY = [
   ["mus-peito", "Peito"],
@@ -2911,10 +2914,13 @@ let finishBackfillStarted = false;
 let muscleTaxonomyStarted = false;
 let prog3xStarted = false;
 let prog4xStarted = false;
+let backfill1004Started = false;
 let muscleSnapshotReady = false;
 let exerciseSnapshotReady = false;
 let daysSnapshotReady = false;
 let programsSnapshotReady = false;
+let logsSnapshotReady = false;
+let sessionsSnapshotReady = false;
 let favoriteAppliedOnBoot = false;
 
 async function migrateRefWeights(exercises) {
@@ -3168,6 +3174,55 @@ async function applyProg4xMigration() {
   }
 }
 
+// v7.7: one-time backfill of the 2026-10-04 workout that never reached
+// Firestore (the owner did not press "Finalizar treino"). Waits for every
+// snapshot it reads, resolves everything first and aborts with a toast on the
+// first error. Existing logs/sessions are never overwritten, so a lost flag
+// (other device, cleared storage) is harmless. Runs in #debug too, without
+// persisting the flag.
+async function applyBackfill1004() {
+  const isDebug = location.hash === "#debug";
+  if (backfill1004Started || (!isDebug && localStorage.getItem(BACKFILL_1004_KEY))) return;
+  if (
+    !exerciseSnapshotReady || !programsSnapshotReady || !daysSnapshotReady ||
+    !logsSnapshotReady || !sessionsSnapshotReady
+  ) {
+    return;
+  }
+  backfill1004Started = true;
+
+  const { logs, session, refWeightUpdates, errors } = resolveWorkoutBackfill(
+    BACKFILL_2026_10_04,
+    {
+      exercises: state.exercises,
+      programs: state.programs,
+      days: state.days,
+      logs: state.logs,
+      sessions: state.sessions,
+    }
+  );
+  if (errors.length > 0) {
+    console.error("Lançamento do treino de 04/10 não aplicado:", errors);
+    backfill1004Started = false;
+    toast(`Erro no treino de 04/10: ${errors[0]}`);
+    return;
+  }
+  if (logs.length === 0 && !session) {
+    if (!isDebug) localStorage.setItem(BACKFILL_1004_KEY, "1");
+    return;
+  }
+
+  try {
+    await db.backfillWorkout({ logs, session, refWeightUpdates });
+    if (!isDebug) localStorage.setItem(BACKFILL_1004_KEY, "1");
+    toast("Treino de 04/10 lançado.");
+  } catch (error) {
+    console.error("Erro ao lançar o treino de 04/10:", error);
+    backfill1004Started = false;
+    toast("Erro ao lançar o treino de 04/10.");
+  }
+}
+
 // Sessions finished before v6.5 left no record: "Finalizar treino" used to
 // write nothing, so a day trained with one exercise left over never got its
 // check. Marks those days as finished from the logs they do have, so the id
@@ -3231,6 +3286,7 @@ function onExercises(exercises) {
   applyMuscleTaxonomy();
   applyProg3xMigration();
   applyProg4xMigration();
+  applyBackfill1004();
   renderExercises();
   renderTreino();
   renderSeries();
@@ -3246,6 +3302,7 @@ function onPrograms(programs) {
   programsSnapshotReady = true;
   applyFavoriteOnBoot();
   applyProg4xMigration();
+  applyBackfill1004();
   renderProgramsList();
   renderDaysManager();
   renderTreino();
@@ -3257,6 +3314,7 @@ function onDays(days) {
   applyFavoriteOnBoot();
   applyProg3xMigration();
   applyProg4xMigration();
+  applyBackfill1004();
   renderProgramsList();
   renderDaysManager();
   renderTreino();
@@ -3265,7 +3323,9 @@ function onDays(days) {
 function onLogs(logs) {
   state.logs = logs;
   state.logsById = new Map(logs.map((l) => [l.id, l]));
+  logsSnapshotReady = true;
   backfillFinishedSessions(logs);
+  applyBackfill1004();
   renderTreino();
   renderExercises();
   renderHist();
@@ -3298,6 +3358,8 @@ function showCompletedCycle(program, progress) {
 
 function onSessions(sessions) {
   state.sessions = sessions;
+  sessionsSnapshotReady = true;
+  applyBackfill1004();
   renderTreino();
   queueMicrotask(() => {
     if (state.sessions !== sessions) return;

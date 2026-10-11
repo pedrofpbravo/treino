@@ -54,6 +54,21 @@ const store = {
       createdAt: ts(),
       updatedAt: ts(),
     },
+    // Debug-only (not in seed.js): production already has "Hack squat" (v7.4
+    // creates it), and the v7.7 backfill of 2026-10-04 needs it as the
+    // exercise that leg press replaced.
+    {
+      id: "ex-hack_squat",
+      name: "Hack squat",
+      nameLower: normalize("Hack squat"),
+      primaryMuscleId: "mus-quadriceps",
+      secondaryMuscleIds: ["mus-gluteos"],
+      similarIds: [],
+      refWeight: "",
+      note: "",
+      createdAt: ts(),
+      updatedAt: ts(),
+    },
   ]),
   programs: SEED_PROGRAMS.map((prog, pi) => ({
     id: `prog-${prog.slug}`,
@@ -507,6 +522,30 @@ export async function finishSession(data) {
 }
 export async function unfinishSession(sid) {
   store.sessions = store.sessions.filter((session) => session.id !== sid);
+  emit.sessions();
+}
+
+export async function backfillWorkout({ logs, session, refWeightUpdates }) {
+  (logs || []).forEach((log) => {
+    const lid = logDocId(log);
+    const saved = { id: lid, ...log, substitutedForId: log.substitutedForId || null, ts: ts() };
+    const idx = store.logs.findIndex((item) => item.id === lid);
+    if (idx >= 0) store.logs[idx] = saved;
+    else store.logs.push(saved);
+  });
+  if (session) {
+    const sid = `sess-${session.date}-${session.dayId}`;
+    const saved = { id: sid, ...session, finishedAt: ts() };
+    const idx = store.sessions.findIndex((item) => item.id === sid);
+    if (idx >= 0) store.sessions[idx] = saved;
+    else store.sessions.push(saved);
+  }
+  (refWeightUpdates || []).forEach(({ id: eid, refWeight }) => {
+    const exercise = store.exercises.find((item) => item.id === eid);
+    if (exercise) Object.assign(exercise, { refWeight: String(refWeight), updatedAt: ts() });
+  });
+  emit.exercises();
+  emit.logs();
   emit.sessions();
 }
 

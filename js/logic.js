@@ -488,6 +488,88 @@ export function resolveProg4x(exercises, muscles) {
   return { creates: [...createsById.values()], days, errors };
 }
 
+// ---------- one-time workout backfill (v7.7) ----------
+// The 2026-10-04 lower-body workout never reached Firestore (the owner did not
+// press "Finalizar treino"). This spec is replayed once at boot, writing what
+// "Finalizar treino" would have written: one log per exercise, the finished
+// session, and the refWeight bump (never lowering it).
+export const BACKFILL_2026_10_04 = {
+  date: "2026-10-04",
+  programId: "prog-fb-ul",
+  dayId: "day-fb-ul-lower",
+  items: [
+    { exerciseId: "ex-leg_press_45", sets: 4, reps: 10, weight: 120, substitutedForId: "ex-hack_squat" },
+    { exerciseId: "ex-hip_thrust", sets: 3, reps: 12, weight: 40, substitutedForId: "ex-rdl_stiff" },
+    { exerciseId: "ex-cadeira_extensora", sets: 3, reps: 10, weight: 60, substitutedForId: null },
+    { exerciseId: "ex-cadeira_flexora_bilateral", sets: 3, reps: 10, weight: 57.5, substitutedForId: null },
+    { exerciseId: "ex-abdominal_maquina", sets: 3, reps: 10, weight: 62.5, substitutedForId: null },
+    { exerciseId: "ex-biceps_maquina", sets: 2, reps: 10, weight: 22.5, substitutedForId: null },
+  ],
+};
+
+// Pure resolver. Returns { logs, session, refWeightUpdates, errors }. Any error
+// means nothing may be written. Logs whose deterministic id already exists are
+// skipped (never overwritten); `session` is null when its id already exists.
+// refWeightUpdates carry the numeric max; db.backfillWorkout stores String(max),
+// the same format the "Finalizar treino" bump writes.
+export function resolveWorkoutBackfill(spec, { exercises, programs, days, logs, sessions } = {}) {
+  const exercisesById = new Map((exercises || []).map((exercise) => [exercise.id, exercise]));
+  const program = (programs || []).find((item) => item.id === spec.programId);
+  const day = (days || []).find((item) => item.id === spec.dayId);
+  const existingLogIds = new Set((logs || []).map((log) => log.id));
+  const errors = [];
+
+  if (!program) errors.push(`Programa não encontrado: ${spec.programId}.`);
+  if (!day) errors.push(`Dia não encontrado: ${spec.dayId}.`);
+  spec.items.forEach((item) => {
+    if (!exercisesById.has(item.exerciseId)) {
+      errors.push(`Exercício não encontrado: ${item.exerciseId}.`);
+    }
+    if (item.substitutedForId && !exercisesById.has(item.substitutedForId)) {
+      errors.push(`Exercício original não encontrado: ${item.substitutedForId}.`);
+    }
+  });
+  if (errors.length > 0) return { logs: [], session: null, refWeightUpdates: [], errors };
+
+  const programName = program.name || "Full Body + Upper Lower";
+  const dayName = day.name || "Lower";
+  const outLogs = [];
+  const refWeightUpdates = [];
+
+  spec.items.forEach((item) => {
+    const exercise = exercisesById.get(item.exerciseId);
+    const log = {
+      date: spec.date,
+      programId: spec.programId,
+      dayId: spec.dayId,
+      exerciseId: item.exerciseId,
+      substitutedForId: item.substitutedForId || null,
+      exerciseName: exercise.name || item.exerciseId,
+      dayName,
+      programName,
+      sets: Array.from({ length: item.sets }, () => ({
+        reps: item.reps,
+        weight: item.weight,
+        done: true,
+      })),
+    };
+    if (existingLogIds.has(logDocId(log))) return;
+    outLogs.push(log);
+
+    const currentRefWeight = parseRefWeight(exercise.refWeight);
+    if (currentRefWeight === null || item.weight > currentRefWeight) {
+      refWeightUpdates.push({ id: item.exerciseId, refWeight: item.weight });
+    }
+  });
+
+  const sessionId = `sess-${spec.date}-${spec.dayId}`;
+  const session = (sessions || []).some((item) => item.id === sessionId)
+    ? null
+    : { date: spec.date, programId: spec.programId, dayId: spec.dayId, dayName, programName };
+
+  return { logs: outLogs, session, refWeightUpdates, errors };
+}
+
 // ---------- dates (always LOCAL, never toISOString: UTC would shift the
 // date in Brazil from 21:00 onwards) ----------
 
