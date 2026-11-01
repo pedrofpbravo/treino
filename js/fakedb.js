@@ -491,10 +491,11 @@ export async function updateDay(did, { name, entries }) {
   Object.assign(store.days.find((d) => d.id === did), { name, entries });
   emit.days();
 }
-export async function swapDayOrder(a, b) {
-  const da = store.days.find((d) => d.id === a.id);
-  const db_ = store.days.find((d) => d.id === b.id);
-  [da.order, db_.order] = [b.order, a.order];
+export async function setDayOrder(orderedDayIds) {
+  orderedDayIds.forEach((did, i) => {
+    const d = store.days.find((x) => x.id === did);
+    if (d) d.order = i;
+  });
   emit.days();
 }
 export async function deleteDay(did) {
@@ -552,6 +553,20 @@ export async function backfillWorkout({ logs, session, refWeightUpdates }) {
     if (exercise) Object.assign(exercise, { refWeight: String(refWeight), updatedAt: ts() });
   });
   emit.exercises();
+  emit.logs();
+  emit.sessions();
+}
+
+export async function moveWorkoutDate({ logs, sessions }) {
+  const moveInto = (list, items) => {
+    (items || []).forEach(({ oldId, newId, data }) => {
+      const idx = list.findIndex((item) => item.id === oldId);
+      if (idx >= 0) list.splice(idx, 1);
+      list.push({ id: newId, ...data });
+    });
+  };
+  moveInto(store.logs, logs);
+  moveInto(store.sessions, sessions);
   emit.logs();
   emit.sessions();
 }

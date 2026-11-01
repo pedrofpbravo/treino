@@ -2,6 +2,43 @@
 
 Running log per the Orchestration Protocol (Fable orchestrates, Codex executes).
 
+## 2026-11-01: v7.9, ordem dos dias, Lower de 01/11 para 31/10, recuperação de treino não finalizado
+
+Protocolo: Opus orquestra, Sonnet implementa, Sonnet novo revisa. Plano aprovado pelo Pedro
+(`~/.claude/plans/ok-lets-plan-improvements-logical-raven.md`).
+
+### Request (Pedro)
+(1) Mudar a ordem dos dias de um programa, para sempre (escolheu ▲▼ em Ajustes > Treinos).
+(2) O Lower registrado em 01/11 foi feito no sábado 31/10: mover; o Upper de 01/11 fica.
+(3) Treino esquecido sem finalizar não pode se perder: pop-up na próxima abertura, com a data
+correta, antes de começar o dia novo.
+
+### Delegações (serializadas, todas mexem em main.js)
+- Brief 1: `setDayOrder` (db + fakedb), ▲▼ em `renderDaysManager`, `swapDayOrder` removido (sem
+  callers; não funciona com `order` empatado).
+- Brief 2: `resolveDateMove` (logic), `moveWorkoutDate` (db + fakedb), migração `applyMoveLower1101`
+  com flag `gym:move-lower-1101-v7-9`.
+- Brief 3: `pruneDrafts` novo, `pendingRecoveries`, `#sheet-recover`, `maybePromptRecovery`, fluxo de
+  finalizar com alvo (dia + data), bump v7.9.
+- Follow-up: settled + limpeza do draft ANTES do await; flag não grava com logs vazios; formatação.
+
+### Review
+- Reviewer 1: tudo PASS. Riscos apontados: offline, cache vazio, outro aparelho.
+- Review do orquestrador (diff lido): confirmou o bloqueio offline (`commit` só resolve com o
+  servidor, e o pop-up esperava por ele) e achou o slip de formatação em `FINISH_BACKFILL_DATES`.
+- Reviewer 2: A-G PASS com `moveWorkoutDate` pendente para sempre, falhando uma vez, colisão e cache
+  vazio (com stub de não-debug em cópia no scratchpad). "An unknown error occurred when fetching the
+  script" é do pane: todo registro de SW falha lá, até com sw.js vazio.
+
+### Riscos aceitos
+- A migração apaga drafts de 01/11 de qualquer dia "Lower*", mesmo com séries marcadas (Pedro não
+  treina outro Lower em 01/11).
+- Sessão finalizada em outro aparelho pode não estar no cache no primeiro snapshot: pop-up indevido
+  possível (Pedro usa só o iPhone).
+- Ciclo completado por recuperação de OUTRO programa só celebra quando esse programa é selecionado.
+- Não testado: Firestore real, iPhone real, dados reais de 01/11.
+- NÃO COMMITADO: aguardando ordem do Pedro.
+
 ## 2026-10-03: v7.6, programa "Upper Lower 4x" + programa favorito
 
 ### Request (Pedro)

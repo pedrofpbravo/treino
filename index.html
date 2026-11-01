@@ -495,6 +495,19 @@
     </div>
   </div>
 
+  <!-- Unfinished workout from a previous day (v7.9): not dismissable, only Registrar / Descartar -->
+  <div id="sheet-recover" class="sheet" hidden>
+    <h3>Treino não finalizado</h3>
+    <p id="recover-sub" class="hint"></p>
+    <ul id="recover-list" class="rows"></ul>
+    <p class="hint">Só as séries marcadas são salvas.</p>
+    <div class="sheet-actions">
+      <button type="button" id="btn-recover-discard" class="btn ghost">Descartar</button>
+      <span class="spacer"></span>
+      <button type="button" id="btn-recover-register" class="btn primary">Registrar</button>
+    </div>
+  </div>
+
   <!-- Completed program cycle -->
   <div id="sheet-cycle" class="sheet" hidden>
     <h3>Semana concluída</h3>

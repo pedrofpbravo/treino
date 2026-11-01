@@ -14,12 +14,16 @@ import {
   resolveProg3xEntries,
   resolveProg4x,
   resolveWorkoutBackfill,
+  resolveDateMove,
   BACKFILL_2026_10_04,
   PROG4X_PROGRAM_ID,
   PROG4X_PROGRAM_NAME,
   todayStr,
   fmtDate,
   fmtDateFull,
+  fmtDateWeekday,
+  draftHasRecordableSets,
+  pendingRecoveries,
   addDaysStr,
   weekStartStr,
   weekRangeLabel,
@@ -72,7 +76,7 @@ import { lineChart, barChart } from "./charts.js";
 
 // Shown in Ajustes so anyone can tell which deploy a phone is running.
 // Keep in sync with CACHE in sw.js.
-const APP_VERSION = "v7.8";
+const APP_VERSION = "v7.9";
 
 const $ = (id) => document.getElementById(id);
 
@@ -94,7 +98,10 @@ function saveCollapsedCards() {
 // treino" writes it to Firestore: expanding/collapsing cards and checking
 // sets never touch the history. Shape:
 // { "date|dayId": { exerciseId: sets[], __subs: { originalId: substituteId } } }.
-// Drafts from previous dates are pruned: an unfinished workout is discarded.
+// v7.9: drafts from previous dates are KEPT when they hold checked sets and
+// that day was never finished: they are offered for registration under their
+// real date (see maybePromptRecovery). Only empty ones, or ones whose session
+// is already finished, are pruned.
 
 const DRAFTS_KEY = "gym:drafts";
 let drafts = {};
@@ -113,6 +120,17 @@ function pruneDrafts(today) {
   let changed = false;
   Object.keys(drafts).forEach((key) => {
     if (key.startsWith(`${today}|`)) return;
+    // Old draft: keep it while it has recordable sets and no finished session.
+    // Before the sessions snapshot arrives only the "nothing to record" kind
+    // can be judged, so everything else waits.
+    let keep = draftHasRecordableSets(drafts[key]);
+    if (keep && sessionsSnapshotReady) {
+      const sep = key.indexOf("|");
+      const date = key.slice(0, sep);
+      const dayId = key.slice(sep + 1);
+      if (sep < 0 || finishedSession(date, dayId)) keep = false;
+    }
+    if (keep) return;
     delete drafts[key];
     changed = true;
   });
@@ -270,6 +288,130 @@ function closeSheets() {
     deferredCycle = null;
     showCompletedCycle(pending.program, pending.progress);
   }
+  // v7.9: the recovery pop-up cannot be lost; whatever closed it, it comes
+  // back once nothing else is open (after the cycle sheet, if one just opened).
+  if (!recoveryHold) maybePromptRecovery();
+}
+
+// ---------- unfinished-workout recovery (v7.9) ----------
+
+let recovery = null; // { key, date, dayId, target, discardArmed } while the pop-up is open
+let recoveryHold = false; // set while a finish flow is mid-transition
+
+const anySheetOpen = () => [...document.querySelectorAll(".sheet")].some((s) => !s.hidden);
+
+function maybePromptRecovery() {
+  if (
+    !exerciseSnapshotReady || !programsSnapshotReady || !daysSnapshotReady ||
+    !logsSnapshotReady || !sessionsSnapshotReady || !moveLower1101Settled
+  ) {
+    return;
+  }
+  if (anySheetOpen()) return;
+  const next = pendingRecoveries(drafts, todayStr(), state.sessions)[0];
+  if (!next) {
+    recovery = null;
+    return;
+  }
+  showRecovery(next);
+}
+
+// Finish target: which day and date a finish flow acts on. Same-day finishing
+// targets the open day today; recovery targets an old draft's own day and date.
+function currentFinishTarget() {
+  const day = currentDay();
+  if (!day) return null;
+  return { day, program: currentProgram(), date: todayStr(), key: null, recovery: false, entries: null };
+}
+
+function recoveryTarget({ key, date, dayId }) {
+  const dayDraft = dayDraftFor(date, dayId);
+  const catalogDay = state.days.find((d) => d.id === dayId) || null;
+  const draftIds = Object.keys(dayDraft || {}).filter((id) => !id.startsWith("__"));
+  const baseEntries = catalogDay
+    ? effectiveDayEntries(catalogDay, dayDraft)
+    : draftIds.map((exerciseId) => ({
+        exerciseId,
+        targetSets: Array.isArray(dayDraft[exerciseId]) ? dayDraft[exerciseId].length : 1,
+      }));
+  const known = new Set(baseEntries.map((entry) => entry.exerciseId));
+  // Sets of an exercise no longer in the day still get recorded.
+  const entries = [
+    ...baseEntries,
+    ...draftIds
+      .filter((id) => !known.has(id))
+      .map((exerciseId) => ({
+        exerciseId,
+        targetSets: Array.isArray(dayDraft[exerciseId]) ? dayDraft[exerciseId].length : 1,
+      })),
+  ];
+  const day = catalogDay || { id: dayId, name: "Treino", programId: null, entries };
+  const program = day.programId ? state.programs.find((p) => p.id === day.programId) || null : null;
+  return { day, program, date, key, recovery: true, entries };
+}
+
+function showRecovery(rec) {
+  const target = recoveryTarget(rec);
+  const isNew = !recovery || recovery.key !== rec.key;
+  recovery = { ...rec, target, discardArmed: isNew ? false : recovery.discardArmed };
+
+  $("recover-sub").textContent = `${target.day.name} · ${fmtDateWeekday(rec.date)}`;
+  const ul = $("recover-list");
+  ul.innerHTML = "";
+  let recordable = 0;
+  buildFinishPlans(target).forEach(({ resolved, recorded }) => {
+    if (recorded.length === 0) return;
+    const li = document.createElement("li");
+    li.className = "row-line";
+    const name = document.createElement("span");
+    name.className = "row-name";
+    name.textContent = resolved.missingSubstitute
+      ? `${resolved.originalExercise?.name || resolved.originalExerciseId} (substituto removido)`
+      : resolved.exercise?.name || resolved.exerciseId;
+    const sub = document.createElement("span");
+    sub.className = "row-sub";
+    sub.textContent = setsLabel(recorded) || "feito";
+    li.append(name, sub);
+    ul.appendChild(li);
+    if (!resolved.missingSubstitute) recordable++;
+  });
+
+  const registerBtn = $("btn-recover-register");
+  registerBtn.textContent = `Registrar em ${fmtDate(rec.date)}`;
+  registerBtn.disabled = recordable === 0;
+  renderRecoverDiscard();
+  openSheet("sheet-recover");
+}
+
+function renderRecoverDiscard() {
+  const armed = !!recovery?.discardArmed;
+  const btn = $("btn-recover-discard");
+  btn.textContent = armed ? "Toque de novo para descartar" : "Descartar";
+  btn.classList.toggle("danger", armed);
+}
+
+function discardRecovery() {
+  if (!recovery) return;
+  if (!recovery.discardArmed) {
+    recovery.discardArmed = true;
+    renderRecoverDiscard();
+    return;
+  }
+  const { key } = recovery;
+  recovery = null;
+  delete drafts[key];
+  saveDrafts();
+  recoveryHold = true;
+  closeSheets();
+  recoveryHold = false;
+  renderTreino();
+  maybePromptRecovery();
+  toast("Treino descartado.");
+}
+
+function registerRecovery() {
+  if (!recovery) return;
+  reviewAndFinishWorkout(recovery.target);
 }
 
 function muscleName(id) {
@@ -1222,22 +1364,27 @@ function toggleWorkout() {
   openFinishSheet();
 }
 
-function buildFinishPlans(day, today) {
-  const dayDraft = dayDraftFor(today, day.id);
-  return effectiveDayEntries(day, dayDraft).map((entry) => ({
+function buildFinishPlans(target) {
+  const { day, date } = target;
+  const dayDraft = dayDraftFor(date, day.id);
+  return (target.entries || effectiveDayEntries(day, dayDraft)).map((entry) => ({
     entry,
     resolved: resolveWorkoutExercise(entry, dayDraft, state.exercisesById),
-    recorded: recordedSets(draftSetsFor(today, day.id, entry.exerciseId)),
+    recorded: recordedSets(draftSetsFor(date, day.id, entry.exerciseId)),
   }));
 }
 
-function reviewAndFinishWorkout() {
-  const day = currentDay();
-  if (!day) return;
-  const today = todayStr();
+// The target of a weight check that is waiting for "Confirmar mesmo assim".
+let pendingFinishTarget = null;
+
+function reviewAndFinishWorkout(target) {
+  // (the sheet button passes a click event: only a real target object counts)
+  if (!target || !target.day) target = currentFinishTarget();
+  if (!target) return;
+  const today = target.date;
   const suspicious = [];
 
-  buildFinishPlans(day, today).forEach(({ resolved, recorded }) => {
+  buildFinishPlans(target).forEach(({ resolved, recorded }) => {
     if (recorded.length === 0 || resolved.missingSubstitute) return;
     const ex = resolved.exercise;
     const reference = referenceWeightFor(state.logs, resolved.exerciseId, today, ex?.refWeight);
@@ -1252,9 +1399,10 @@ function reviewAndFinishWorkout() {
   });
 
   if (suspicious.length === 0) {
-    confirmFinishWorkout();
+    confirmFinishWorkout(target);
     return;
   }
+  pendingFinishTarget = target;
 
   const list = $("finish-check-list");
   list.innerHTML = "";
@@ -1269,12 +1417,12 @@ function reviewAndFinishWorkout() {
   openSheet("sheet-finish-check");
 }
 
-function confirmFinishWorkout() {
-  const day = currentDay();
-  if (!day) return;
-  const program = currentProgram();
-  const today = todayStr();
-  const plans = buildFinishPlans(day, today);
+function confirmFinishWorkout(target) {
+  if (!target || !target.day) target = currentFinishTarget();
+  if (!target) return;
+  const { day, program, recovery: isRecovery } = target;
+  const today = target.date;
+  const plans = buildFinishPlans(target);
   const protectedExerciseIds = new Set(
     plans
       .filter(({ resolved }) => !resolved.missingSubstitute)
@@ -1342,6 +1490,7 @@ function confirmFinishWorkout() {
   const pendingSessionId = sessionId(today, day.id);
   pendingFinishToastId = pendingSessionId;
   pendingFinishSkippedCount = missingSubstitutes;
+  pendingFinishRecoveryDate = isRecovery ? today : null;
   db.finishSession({
     date: today,
     programId: program?.id || day.programId,
@@ -1358,12 +1507,25 @@ function confirmFinishWorkout() {
   if (localStorage.getItem("gym:workoutStart") === `${today}|${day.id}`) {
     localStorage.removeItem("gym:workoutStart");
   }
-  cancelTimer();
+  if (isRecovery) {
+    // A recovered workout is not today's: the draft is consumed, and the
+    // running rest timer (today's) is left alone.
+    delete drafts[target.key];
+    saveDrafts();
+    recovery = null;
+  } else {
+    cancelTimer();
+  }
+  pendingFinishTarget = null;
+  // The recovery prompt must not pop up between the sheets of this flow.
+  recoveryHold = true;
   closeSheets();
+  recoveryHold = false;
   // Post-finish order: the summary sheet closes, the progression question
   // opens on top (right now, synchronously) and the "Semana concluída" cycle
   // sheet, which arrives later with the sessions snapshot, waits for it.
   if (proposals.length > 0) openProgressionSheet(proposals);
+  else maybePromptRecovery();
 }
 
 function progressionLabel(row) {
@@ -2871,19 +3033,45 @@ function renderDaysManager() {
     const list = document.createElement("div");
     list.className = "days-manager-list";
     const days = daysOf(program.id);
-    days.forEach((day) => {
-      const row = document.createElement("button");
-      row.type = "button";
+    const moveDay = (from, to) => {
+      const ids = days.map((d) => d.id);
+      const [moved] = ids.splice(from, 1);
+      ids.splice(to, 0, moved);
+      db.setDayOrder(ids).catch(() => toast("Erro ao reordenar."));
+    };
+    days.forEach((day, idx) => {
+      const row = document.createElement("div");
       row.className = "row-line days-manager-row";
-      row.addEventListener("click", () => openDaySheet(day.id, { scope: "permanent" }));
 
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "days-manager-open";
+      open.addEventListener("click", () => openDaySheet(day.id, { scope: "permanent" }));
       const name = document.createElement("span");
       name.className = "row-name";
       name.textContent = day.name;
       const arrow = document.createElement("span");
       arrow.className = "days-manager-arrow";
       arrow.textContent = "›";
-      row.append(name, arrow);
+      open.append(name, arrow);
+
+      const up = document.createElement("button");
+      up.type = "button";
+      up.className = "icon-btn";
+      up.textContent = "▲";
+      up.disabled = idx === 0;
+      up.setAttribute("aria-label", "Mover para cima");
+      up.addEventListener("click", () => moveDay(idx, idx - 1));
+
+      const down = document.createElement("button");
+      down.type = "button";
+      down.className = "icon-btn";
+      down.textContent = "▼";
+      down.disabled = idx === days.length - 1;
+      down.setAttribute("aria-label", "Mover para baixo");
+      down.addEventListener("click", () => moveDay(idx, idx + 1));
+
+      row.append(open, up, down);
       list.appendChild(row);
     });
 
@@ -3097,6 +3285,7 @@ const MUSCLE_TAXONOMY_KEY = "gym:muscle-taxonomy-v7-3";
 const PROG3X_KEY = "gym:prog3x-v7-4";
 const PROG4X_KEY = "gym:prog4x-v7-6";
 const BACKFILL_1004_KEY = "gym:backfill-1004-v7-7";
+const MOVE_LOWER_1101_KEY = "gym:move-lower-1101-v7-9";
 const FINISH_BACKFILL_DATES = ["2026-09-05"];
 const MUSCLE_TAXONOMY = [
   ["mus-peito", "Peito"],
@@ -3161,6 +3350,8 @@ let muscleTaxonomyStarted = false;
 let prog3xStarted = false;
 let prog4xStarted = false;
 let backfill1004Started = false;
+let moveLower1101Started = false;
+let moveLower1101Settled = false;
 let muscleSnapshotReady = false;
 let exerciseSnapshotReady = false;
 let daysSnapshotReady = false;
@@ -3469,6 +3660,83 @@ async function applyBackfill1004() {
   }
 }
 
+// v7.9: one-time fix of the Lower workout recorded under 2026-11-01 that was
+// actually done on 2026-10-31. Moves only the Lower logs/session (new docs with
+// the date changed, old ones deleted, one batch); Upper is never touched.
+// Collisions or several Lower days abort with a toast and no writes. Also drops
+// the local Lower draft of 2026-11-01 in every non-error outcome. Runs in
+// #debug too, without reading or persisting the flag. moveLower1101Settled
+// tells later code the migration is over (set before the commit await so
+// offline never blocks the recovery pop-up; also no match, flag set, error).
+// The flag is not persisted on a no-match with a fully empty logs cache.
+async function applyMoveLower1101() {
+  const isDebug = location.hash === "#debug";
+  if (moveLower1101Started) return;
+  if (!isDebug && localStorage.getItem(MOVE_LOWER_1101_KEY)) {
+    moveLower1101Started = true;
+    moveLower1101Settled = true;
+    maybePromptRecovery();
+    return;
+  }
+  if (!daysSnapshotReady || !logsSnapshotReady || !sessionsSnapshotReady) return;
+  moveLower1101Started = true;
+
+  const fromDate = "2026-11-01";
+  const { logs, sessions, dayIds, errors } = resolveDateMove(state.logs, state.sessions, {
+    fromDate,
+    toDate: "2026-10-31",
+    dayNamePrefix: "Lower",
+  });
+  if (errors.length > 0) {
+    console.error("Movimento do treino Lower não aplicado:", errors);
+    moveLower1101Settled = true;
+    toast(`Erro ao mover o treino Lower: ${errors[0]}`);
+    maybePromptRecovery();
+    return;
+  }
+
+  const clearLowerDrafts = () => {
+    const lowerDayIds = new Set(dayIds);
+    state.days.forEach((day) => {
+      if (String(day.name || "").trim().toLowerCase().startsWith("lower")) lowerDayIds.add(day.id);
+    });
+    let changed = false;
+    lowerDayIds.forEach((dayId) => {
+      const key = `${fromDate}|${dayId}`;
+      if (key in drafts) {
+        delete drafts[key];
+        changed = true;
+      }
+    });
+    if (changed) saveDrafts();
+    renderTreino();
+    maybePromptRecovery();
+  };
+
+  if (logs.length === 0 && sessions.length === 0) {
+    // An entirely empty logs snapshot means a cold/evicted cache, not "nothing
+    // to move": do not burn the flag, the next load must look again.
+    if (!isDebug && state.logs.length > 0) localStorage.setItem(MOVE_LOWER_1101_KEY, "1");
+    moveLower1101Settled = true;
+    clearLowerDrafts();
+    return;
+  }
+
+  try {
+    // Settle BEFORE the await: offline, batch.commit() only resolves once the
+    // server acknowledges, and the recovery pop-up must not wait for that.
+    moveLower1101Settled = true;
+    clearLowerDrafts();
+    await db.moveWorkoutDate({ logs, sessions });
+    if (!isDebug) localStorage.setItem(MOVE_LOWER_1101_KEY, "1");
+    toast("Treino Lower movido para 31/10.");
+  } catch (error) {
+    console.error("Erro ao mover o treino Lower:", error);
+    moveLower1101Started = false; // allow retry on the next snapshot
+    toast("Erro ao mover o treino Lower.");
+  }
+}
+
 // Sessions finished before v6.5 left no record: "Finalizar treino" used to
 // write nothing, so a day trained with one exercise left over never got its
 // check. Marks those days as finished from the logs they do have, so the id
@@ -3533,10 +3801,12 @@ function onExercises(exercises) {
   applyProg3xMigration();
   applyProg4xMigration();
   applyBackfill1004();
+  applyMoveLower1101();
   renderExercises();
   renderTreino();
   renderSeries();
   if (state.histView === "cargas") renderCargas();
+  maybePromptRecovery();
 }
 
 function onPrograms(programs) {
@@ -3550,9 +3820,11 @@ function onPrograms(programs) {
   applyFavoriteOnBoot();
   applyProg4xMigration();
   applyBackfill1004();
+  applyMoveLower1101();
   renderProgramsList();
   renderDaysManager();
   renderTreino();
+  maybePromptRecovery();
 }
 
 function onDays(days) {
@@ -3562,9 +3834,11 @@ function onDays(days) {
   applyProg3xMigration();
   applyProg4xMigration();
   applyBackfill1004();
+  applyMoveLower1101();
   renderProgramsList();
   renderDaysManager();
   renderTreino();
+  maybePromptRecovery();
 }
 
 function onLogs(logs) {
@@ -3573,15 +3847,18 @@ function onLogs(logs) {
   logsSnapshotReady = true;
   backfillFinishedSessions(logs);
   applyBackfill1004();
+  applyMoveLower1101();
   renderTreino();
   renderExercises();
   renderHist();
   renderSeries();
   if (!$("sheet-exlog").hidden) renderExerciseLog();
+  maybePromptRecovery();
 }
 
 let pendingFinishToastId = null;
 let pendingFinishSkippedCount = 0;
+let pendingFinishRecoveryDate = null; // set when the pending finish is a recovered workout
 
 function showCompletedCycle(program, progress) {
   // The progression question is open (stacked on top): hold the celebration
@@ -3613,6 +3890,7 @@ function onSessions(sessions) {
   state.sessions = sessions;
   sessionsSnapshotReady = true;
   applyBackfill1004();
+  applyMoveLower1101();
   renderTreino();
   queueMicrotask(() => {
     if (state.sessions !== sessions) return;
@@ -3629,17 +3907,23 @@ function onSessions(sessions) {
 
     if (pendingFinishToastId && sessions.some((session) => session.id === pendingFinishToastId)) {
       const skipped = pendingFinishSkippedCount;
+      const recoveredDate = pendingFinishRecoveryDate;
       pendingFinishToastId = null;
       pendingFinishSkippedCount = 0;
+      pendingFinishRecoveryDate = null;
       if (skipped > 0) {
         toast(skipped === 1
           ? "Treino registrado; substituto removido ignorado."
           : `Treino registrado; ${skipped} substitutos removidos ignorados.`);
       } else if (!shouldCelebrate && $("sheet-progression").hidden) {
         // (skipped while the progression question is open: the toast would sit on top of it)
-        toast("Treino registrado. Bom descanso!");
+        toast(recoveredDate
+          ? `Treino de ${fmtDate(recoveredDate)} registrado.`
+          : "Treino registrado. Bom descanso!");
       }
     }
+    // After any cycle sheet that just opened: the pop-up waits for it.
+    maybePromptRecovery();
   });
 }
 
@@ -3821,11 +4105,16 @@ function wire() {
   $("btn-finish-confirm").addEventListener("click", reviewAndFinishWorkout);
   $("btn-finish-check-back").addEventListener("click", () => {
     $("sheet-finish-check").hidden = true;
+    pendingFinishTarget = null;
   });
   $("btn-finish-check-confirm").addEventListener("click", () => {
     $("sheet-finish-check").hidden = true;
-    confirmFinishWorkout();
+    const target = pendingFinishTarget;
+    pendingFinishTarget = null;
+    confirmFinishWorkout(target);
   });
+  $("btn-recover-register").addEventListener("click", registerRecovery);
+  $("btn-recover-discard").addEventListener("click", discardRecovery);
   $("btn-finish-reopen").addEventListener("click", unfinishWorkout);
   $("btn-progression-keep").addEventListener("click", closeSheets);
   $("btn-progression-apply").addEventListener("click", applyProgression);
@@ -3997,7 +4286,11 @@ function wire() {
   $("btn-detail-history").addEventListener("click", () => openExerciseLog(state.detailEffectiveExerciseId));
   $("btn-exercise-history").addEventListener("click", () => openExerciseLog(state.editingExerciseId));
   $("btn-exlog-close").addEventListener("click", closeExerciseLog);
-  $("sheet-backdrop").addEventListener("click", closeSheets);
+  // The recovery pop-up is modal: only Registrar / Descartar close it.
+  $("sheet-backdrop").addEventListener("click", () => {
+    if (!$("sheet-recover").hidden) return;
+    closeSheets();
+  });
   document.querySelectorAll("[data-close]").forEach((b) =>
     b.addEventListener("click", closeSheets)
   );
@@ -4008,7 +4301,10 @@ function wire() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return;
     const today = todayStr();
-    if (state.lastTreinoRenderDate && today !== state.lastTreinoRenderDate) renderTreino();
+    if (state.lastTreinoRenderDate && today !== state.lastTreinoRenderDate) {
+      renderTreino();
+      maybePromptRecovery();
+    }
   });
   updateOnline();
 }

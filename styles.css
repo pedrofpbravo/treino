@@ -776,6 +776,15 @@ input, select { font: inherit; }
   min-height: 44px;
   text-align: left;
 }
+.days-manager-open {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+}
 .days-manager-arrow {
   flex: none;
   color: var(--muted);

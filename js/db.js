@@ -395,10 +395,10 @@ export function updateDay(id, { name, entries }) {
   return updateDoc(doc(fs, "days", id), { name, entries });
 }
 
-export function swapDayOrder(a, b) {
+// Takes ALL day ids of one program in the new order; order = array position.
+export function setDayOrder(orderedDayIds) {
   const batch = writeBatch(fs);
-  batch.update(doc(fs, "days", a.id), { order: b.order });
-  batch.update(doc(fs, "days", b.id), { order: a.order });
+  orderedDayIds.forEach((id, i) => batch.update(doc(fs, "days", id), { order: i }));
   return batch.commit();
 }
 
@@ -481,6 +481,23 @@ export function backfillWorkout({ logs, session, refWeightUpdates }) {
       refWeight: String(refWeight),
       updatedAt: serverTimestamp(),
     });
+  });
+  return batch.commit();
+}
+
+// v7.9 one-time date move: items are { oldId, newId, data } from
+// resolveDateMove (data = old record without `id`, only `date` changed). One
+// batch creates every new doc and deletes every old one; ts/finishedAt and all
+// other fields are carried over untouched.
+export function moveWorkoutDate({ logs, sessions }) {
+  const batch = writeBatch(fs);
+  (logs || []).forEach((item) => {
+    batch.set(doc(fs, "logs", item.newId), item.data);
+    batch.delete(doc(fs, "logs", item.oldId));
+  });
+  (sessions || []).forEach((item) => {
+    batch.set(doc(fs, "sessions", item.newId), item.data);
+    batch.delete(doc(fs, "sessions", item.oldId));
   });
   return batch.commit();
 }

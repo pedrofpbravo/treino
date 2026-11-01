@@ -603,6 +603,12 @@ export function fmtDateFull(dateStr) {
   return `${WEEKDAYS[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 
+// "sáb, 31/10" from a local "YYYY-MM-DD" (no UTC shifting).
+export function fmtDateWeekday(dateStr) {
+  const d = dateFromStr(dateStr);
+  return `${WEEKDAYS[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)}`;
+}
+
 // Monday of the week containing dateStr, as a date string (BR weeks).
 export function weekStartStr(dateStr) {
   const d = dateFromStr(dateStr);
@@ -657,6 +663,60 @@ export function chartPeriodCount(dates, today, unit, min = 5, max = 52) {
 
 export function logDocId({ date, dayId, exerciseId }) {
   return `log-${date}-${dayId}-${exerciseId}`;
+}
+
+export function sessionDocId({ date, dayId }) {
+  return `sess-${date}-${dayId}`;
+}
+
+// v7.9: plans a one-time move of a finished workout from one date to another.
+// Selects logs/sessions on `fromDate` whose dayName starts with `dayNamePrefix`
+// (case-insensitive). Returns { logs, sessions, dayIds, errors }; each moved
+// item is { oldId, newId, data } where data is the old record minus the
+// client-side `id`, with only `date` changed. Errors (more than one dayId, or
+// a target id already taken on toDate) mean nothing must be written.
+export function resolveDateMove(logs, sessions, { fromDate, toDate, dayNamePrefix }) {
+  const prefix = String(dayNamePrefix || "").trim().toLowerCase();
+  const matches = (record) =>
+    record.date === fromDate &&
+    String(record.dayName || "").trim().toLowerCase().startsWith(prefix);
+  const strip = (record, date) => {
+    const { id: _id, ...rest } = record;
+    return { ...rest, date };
+  };
+
+  const movedLogs = (logs || []).filter(matches).map((log) => ({
+    oldId: log.id,
+    newId: logDocId({ date: toDate, dayId: log.dayId, exerciseId: log.exerciseId }),
+    data: strip(log, toDate),
+  }));
+  const movedSessions = (sessions || []).filter(matches).map((session) => ({
+    oldId: session.id,
+    newId: sessionDocId({ date: toDate, dayId: session.dayId }),
+    data: strip(session, toDate),
+  }));
+  const dayIds = [...new Set(
+    [...(logs || []).filter(matches), ...(sessions || []).filter(matches)]
+      .map((record) => record.dayId)
+  )];
+
+  const errors = [];
+  if (dayIds.length > 1) {
+    errors.push(`mais de um treino "${dayNamePrefix}" em ${fromDate} (${dayIds.join(", ")})`);
+  }
+  const takenLogs = new Set((logs || []).filter((l) => l.date === toDate).map((l) => l.id));
+  const takenSessions = new Set((sessions || []).filter((s) => s.date === toDate).map((s) => s.id));
+  movedLogs.forEach((item) => {
+    if (takenLogs.has(item.newId)) errors.push(`já existe o registro ${item.newId}`);
+  });
+  movedSessions.forEach((item) => {
+    if (takenSessions.has(item.newId)) errors.push(`já existe a sessão ${item.newId}`);
+  });
+  const newIds = movedLogs.map((item) => item.newId);
+  if (new Set(newIds).size !== newIds.length) errors.push("registros duplicados no destino");
+
+  if (errors.length > 0) return { logs: [], sessions: [], dayIds, errors };
+  return { logs: movedLogs, sessions: movedSessions, dayIds, errors };
 }
 
 const tsMillis = (log) =>
@@ -980,6 +1040,46 @@ export function draftHasExerciseSets(dayDraft) {
   return Object.entries(dayDraft).some(([exerciseId, sets]) =>
     !exerciseId.startsWith("__") && Array.isArray(sets) && sets.length > 0
   );
+}
+
+// True when a draft holds at least one exercise that "Finalizar treino" would
+// record (same rule: recordedSets). Keys starting with "__" are metadata.
+export function draftHasRecordableSets(dayDraft) {
+  if (!dayDraft || typeof dayDraft !== "object" || Array.isArray(dayDraft)) return false;
+  return Object.entries(dayDraft).some(([exerciseId, sets]) =>
+    !exerciseId.startsWith("__") && recordedSets(sets).length > 0
+  );
+}
+
+// Splits a draft key "YYYY-MM-DD|dayId"; null for anything malformed.
+export function parseDraftKey(key) {
+  if (typeof key !== "string") return null;
+  const match = /^(\d{4}-\d{2}-\d{2})\|(.+)$/.exec(key);
+  return match ? { date: match[1], dayId: match[2] } : null;
+}
+
+// v7.9: drafts from before `today` that still hold recordable sets and whose
+// day was never finished. These are offered for registration under their real
+// date, oldest first. Malformed keys/values are ignored.
+export function pendingRecoveries(drafts, today, sessions) {
+  if (!drafts || typeof drafts !== "object") return [];
+  const finished = new Set(
+    (Array.isArray(sessions) ? sessions : [])
+      .filter((session) => session && session.date && session.dayId)
+      .map((session) => `${session.date}|${session.dayId}`)
+  );
+  return Object.keys(drafts)
+    .map((key) => {
+      const parsed = parseDraftKey(key);
+      return parsed ? { key, date: parsed.date, dayId: parsed.dayId } : null;
+    })
+    .filter((item) =>
+      item &&
+      item.date < today &&
+      draftHasRecordableSets(drafts[item.key]) &&
+      !finished.has(`${item.date}|${item.dayId}`)
+    )
+    .sort((a, b) => a.date.localeCompare(b.date) || a.dayId.localeCompare(b.dayId));
 }
 
 export function effectiveDayEntries(day, dayDraft) {
