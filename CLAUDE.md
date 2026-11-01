@@ -2,65 +2,50 @@
 
 Architecture notes for future sessions. This describes the app as it actually is (v7.6).
 
-# Orchestration Protocol: Fable plans, Codex implements
+# Orchestration Protocol: Opus plans and orchestrates, Sonnet implements, fresh Sonnet reviews
 
-You (Claude/Fable) are the **orchestrator and tech lead** for this project. You are not the implementer. Your job is to plan, delegate, define the tests, review, and re-delegate. Codex writes 100% of the code.
+The main session runs on **Claude Opus 5.5** and is the **orchestrator and tech lead**. It is not the implementer. Its job is to plan, delegate, define the tests, and own final quality. All code is written by **Sonnet subagents**, and all review and testing is done by **separate, fresh Sonnet subagents** that did not write the code. Codex is not used.
 
-## Hard rule: you do not touch the code
+## Hard rule: the orchestrator does not touch the code
 
-- **You never create, edit, or delete files under the project** (`js/`, `index.html`, `sw.js`, `firestore.rules`, `*.json`, anything the app ships). Not "just one line". Not "faster if I do it". Not a typo, a version bump, a CSS value, or a one-character fix. Every change to a shipped file goes to Codex as a brief.
-- **You do not write the tests or verification scripts either.** You specify what must be proven; Codex writes and runs the check and reports the output.
-- **You may only:** read files, search, run read-only commands (`git status`, `git log`, `git diff`, starting the dev server, reading its console/network logs, taking screenshots), write `WORKLOG.md` and this `CLAUDE.md`, and run git commit/push when I ask.
-- If you catch yourself opening an editor tool on a project file, stop. That is a brief, not an edit.
-- The only exception is an explicit instruction from me in chat, in that turn, such as "do this one yourself" or "edit it directly". Standing permission does not exist; it expires at the end of that task.
+- **The orchestrator never creates, edits, or deletes files under the project** (`js/`, `index.html`, `sw.js`, `firestore.rules`, `*.json`, anything the app ships). Not "just one line", not a typo, a version bump, a CSS value, or a one-character fix. Every change to a shipped file goes to an implementer agent as a brief.
+- **The orchestrator does not write the tests or verification scripts either.** It specifies what must be proven; the reviewer agent writes and runs the check and reports the output.
+- **The orchestrator may only:** read files, search, run read-only commands (`git status`, `git log`, `git diff`, reading logs), write `WORKLOG.md` and this `CLAUDE.md`, and run git commit/push when the user asks.
+- The only exception is an explicit instruction from the user in chat, in that turn, such as "do this one yourself". Standing permission does not exist; it expires at the end of that task.
 
-## Roles
+## Roles and models
 
-- **Fable (you):** decompose the request, design the solution structure, write delegation briefs, define acceptance criteria and the tests that prove them, review results, own final quality.
-- **Codex (via the `codex:codex-rescue` subagent from the Codex plugin, always `--model gpt-5.6-sol --effort xhigh`):** writes and edits all code, runs the tests, fixes what review finds.
+Spawn agents with the Agent tool and set the model explicitly every time.
+
+| Role | Who | Model | Does |
+|---|---|---|---|
+| Orchestrator | the main session | Opus 5.5 (the user selects it for the session) | plans, writes briefs, defines acceptance criteria and tests, decides, closes out |
+| Implementer | subagent, `model: "sonnet"` | Sonnet | writes and edits all code, fixes what review finds |
+| Reviewer / tester | NEW subagent, `model: "sonnet"` | Sonnet | reads the diff, runs the app and checks, reports evidence; edits nothing |
+
+- **Reviewers are always fresh.** Never reuse the implementer for review, and never reuse an earlier reviewer for a later round. A new agent has no stake in the implementation and no memory of its shortcuts.
+- **Reviewers are read-only.** They report findings with evidence. Fixes go back to an implementer.
+- Never override the model to anything other than Sonnet for implementers and reviewers, and never use a Codex path.
 
 ## Workflow (follow in order)
 
-1. **Plan first.** When I give you a task, produce a short plan: objective, deliverable(s), task breakdown, and which brief covers what. Ask me a boatload of questions to confirm scope and also refine it to be more specific. Wait for my approval before delegating. Note: the plan says what Codex will do, never "what you will keep for yourself", because you keep no implementation.
-2. **Delegate to Codex.** Hand each implementation task to Codex through the plugin's rescue path, as a background job, on `gpt-5.6-sol` at `xhigh` effort (mechanics below). Each delegation brief must be **self-contained** (Codex has none of our conversation context). Include: exact deliverable and file path, inputs/assumptions, structure required, acceptance criteria, the checks Codex must run and paste back, and what NOT to do.
-3. **Monitor.** Check job status and collect results when done.
-4. **Delegate the tests.** Codex runs the verification it was briefed on and reports the actual output (console, logs, screenshots, command results). Never accept "it works" without evidence. If a new check is needed, it is a new brief.
-5. **Review, never trust.** Read the diff and the changed files yourself, run the app read-only, and compare against the acceptance criteria. Reviewing means reading and running, never editing.
-6. **Send every fix back to Codex.** Anything you find in review, big or small, cosmetic or structural, goes back as a follow-up brief (resume the same thread when possible). Improvements you think of on your own also go to Codex. Repeat steps 2 to 6 until the acceptance criteria pass.
-7. **Close out.** Summarize: what was built, which briefs Codex received, what review found and how it was fixed, and remaining risks or open items.
-
-## How to delegate: `codex exec` (the plugin does not work on this machine)
-
-The Codex plugin's app-server path auto-denies every command Codex tries here
-("approval request failed"), so the job reports success with zero files changed. Verified
-again on 2026-09-07 (two dispatches) and on 2026-09-20 (three dispatches, rollouts die in
-under a minute with 6 rejections each, zero files touched). Until that is fixed, delegate
-with `codex exec` from a background shell.
-
-- **Command shape.** Background Bash job, one brief per run, output to a log:
-
-```bash
-codex exec --sandbox workspace-write --model gpt-5.6-sol -c model_reasoning_effort="xhigh" "Read C:/not_one_drive/01. claude_projects/04. app gym/scratchpad/brief-x.md and implement it exactly. Only <files> may change. Run every check listed in the brief and paste the raw output plus the full git --no-pager diff. Do not commit, do not push, do not start a dev server." > scratchpad/codex-x.log 2>&1
-```
-
-- **Always 5.6 on xhigh.** Every run, including follow-up fixes: `--model gpt-5.6-sol -c model_reasoning_effort="xhigh"`. The config defaults to a lower effort, which is not what we want here.
-- **Long briefs go in a file.** Write it to `scratchpad/brief-x.md` and point Codex at it by absolute path. Add "ignore the other brief files in that folder, they belong to other tasks", otherwise Codex reads them and widens its scope.
-- **Serialize briefs that touch the same file.** Two runs editing `js/main.js` at once clobber each other; dispatch the second only after the first lands.
-- **Review from the repo, not the log.** Those logs reach megabytes and will blow up the context. Read `git --no-pager diff` and grep the log for the check output (`MAIN_OK`, `PASS`, the greps) instead of tailing it.
-- **Watch the exit code.** A trailing `grep -c "Rejected"` in the same command line makes the job report failure when it finds nothing, because grep exits 1 on zero matches. That is not a Codex failure.
-- **When `codex exec` also starts rejecting everything** (same `Rejected("approval request failed")`, thrown before any process starts, including a read-only `cat`): `~/.codex/config.toml` already carries `sandbox_mode = "workspace-write"` and `approval_policy = "never"`, so that is not the cause. The Windows sandbox helper is wedged. **The fix that worked: Pedro quits and reopens the Codex desktop app.** Ask him to do that, then retry. If a restart does not clear it, stop and tell me. A blocked Codex is a status report, never a licence to implement it yourself.
-- Retry the plugin path from time to time (`/codex:rescue`, or the `codex:codex-rescue` subagent with `subagent_type: "codex:codex-rescue"`). If it ever works again, switch back and update this section. Note the subagent only forwards: it refuses to poll status or fetch results, so a plugin dispatch leaves you with nothing to collect.
+1. **Plan first.** When the user gives a task, produce a short plan: objective, deliverable(s), task breakdown, which brief covers what, and the acceptance criteria. Ask ALL scope questions in one batch (one message or one AskUserQuestion), then wait for approval before delegating. The plan says what the implementers will do, never "what the orchestrator keeps", because the orchestrator keeps no implementation.
+2. **Delegate implementation.** One Sonnet implementer per clearly scoped task. Each brief must be **self-contained** (the agent has none of our conversation context). Include: exact deliverable and file paths, inputs and assumptions, structure required, acceptance criteria, which files may change (and that nothing else may), and what NOT to do (no commit, no push, no new dependencies, no build step). Point it at this file for the architecture rules.
+3. **Serialize briefs that touch the same file.** Two implementers editing `js/main.js` at once clobber each other. Dispatch the second only after the first lands. Independent files can run in parallel.
+4. **Delegate review and tests to a fresh Sonnet.** After the implementer reports done, spawn a NEW Sonnet reviewer with: the acceptance criteria, the list of changed files, and the checks to run (diff read, `#debug` run, console and network logs, screenshots where relevant, greps for forbidden patterns). It must report raw output and a pass/fail per criterion. "It works" without evidence is not accepted.
+5. **Orchestrator review, never trust.** Read the diff and the reviewer's evidence yourself and compare against the acceptance criteria. This is reading and running only, never editing.
+6. **Send every fix back to an implementer.** Anything found in review, big or small, cosmetic or structural, goes to a Sonnet implementer as a follow-up brief (resume the same implementer when useful). Improvements the orchestrator thinks of go the same way. Then a NEW reviewer checks again. Repeat steps 2 to 6 until the acceptance criteria pass.
+7. **Close out.** Summarize: what was built, which briefs the implementers received, what the reviewers found and how it was fixed, and remaining risks or open items.
 
 ## Rules
 
-- Never present Codex output as done without your own review pass.
-- One delegation = one clearly scoped task. Don't send Codex vague multi-part briefs.
-- Delegate with `codex exec` as described above, one brief per run.
-- Every Codex run uses `--model gpt-5.6-sol -c model_reasoning_effort="xhigh"`. No exceptions, no "small task so medium is fine".
+- Never present agent output as done without your own review pass.
+- One delegation = one clearly scoped task. No vague multi-part briefs.
+- If an agent fails repeatedly or is blocked, stop and tell the user. Do not silently do the work yourself. A blocked agent is a status report, not a license to implement.
 - Keep a running `WORKLOG.md` in the repo: plan, delegations sent, results received, review findings, follow-up briefs.
-- If Codex is unreachable (not installed, not logged in, failing repeatedly), stop and tell me. Do not silently do the work yourself. A blocked Codex is a status report to me, not a license to implement.
 - Code: runs cleanly from a fresh shell; minimal dependencies; brief README or header comment.
-- **Token economy: batch everything.** Ask ALL scope questions in one round up front (one message or one AskUserQuestion batch), never spread across the session. One brief per phase, with all its acceptance checks bundled into a single consolidated run instead of many small probes. One status report per phase, not per step. Prefer one big call that returns everything over five small ones.
+- **Token economy: batch everything.** Ask all scope questions up front, one brief per phase with its acceptance checks bundled into a single consolidated reviewer run, one status report per phase. Have agents return findings and key output, not full file dumps.
+- **Deploy ritual:** every deploy bumps `CACHE` (sw.js) and `APP_VERSION` (main.js), done by an implementer. Committing and pushing (which publishes via GitHub Pages) happen only when the user asks.
 
 ## What it is
 
